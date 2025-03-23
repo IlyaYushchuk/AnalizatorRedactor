@@ -1,204 +1,238 @@
-#include <ncursesw/ncurses.h> // Используем ncursesw для поддержки русского текста
-#include <locale.h>
-#include <string.h>
-#include <stdlib.h>
+#include <ncursesw/ncurses.h>
+#include <iostream>
+#include <vector>
+#include <string>
+#include <filesystem>
+#include <chrono>
+#include <algorithm>
+#include <cstring>
 
-#define MAX_FILES 10
-#define MAX_PATH 256
+namespace fs = std::filesystem;
 
-typedef struct {
-    wchar_t name[MAX_PATH]; // Используем wchar_t для поддержки UTF-8
-    long size;
-    char type[10];
-    char last_used[50];
-} FileInfo;
+// Структура для хранения информации о файле
+struct FileInfo {
+    std::string name;
+    std::string path;
+    std::size_t size;
+    std::time_t last_used;
+};
 
-typedef enum {
-    MENU_MAIN,
-    MENU_FILES,
-    MENU_ANALYSIS,
-    MENU_EDIT,
-    MENU_STATS,
-    MENU_LOGS
-} MenuState;
+// Глобальные переменные
+std::string current_directory = fs::current_path().string();
+std::vector<FileInfo> files;
+std::vector<FileInfo> unused_files;
+std::vector<std::string> directory_contents; // Содержимое текущей директории
+int selected_index = 0; // Индекс выбранного элемента в списке
 
-// Инициализация ncurses с поддержкой широких символов
-void init_ncurses() {
-    setlocale(LC_ALL, ""); // Включаем поддержку локалей для UTF-8
-    initscr();
-    start_color();
-    init_pair(1, COLOR_CYAN, COLOR_BLACK); // Цвет для текста
-    init_pair(2, COLOR_WHITE, COLOR_BLUE); // Цвет для выделения
-    cbreak();
+// Функция для обновления списка содержимого директории
+void update_directory_contents() {
+    directory_contents.clear();
+    if (current_directory != "/") {
+        directory_contents.push_back(".."); // Добавляем возможность вернуться назад
+    }
+    for (const auto& entry : fs::directory_iterator(current_directory)) {
+        directory_contents.push_back(entry.path().filename().string());
+    }
+}
+
+// Функция для анализа файлов в директории
+void analyze_directory(const std::string& path) {
+    files.clear();
+    unused_files.clear();
+
+    for (const auto& entry : fs::directory_iterator(path)) {
+        if (fs::is_regular_file(entry)) {
+            FileInfo file;
+            file.name = entry.path().filename().string();
+            file.path = entry.path().string();
+            file.size = fs::file_size(entry);
+            file.last_used = fs::last_write_time(entry).time_since_epoch().count();
+
+            files.push_back(file);
+
+            // Проверка на давно не использованные файлы (например, более 30 дней)
+            auto now = std::chrono::system_clock::now();
+            auto last_used_time = std::chrono::system_clock::from_time_t(file.last_used);
+            auto days_since_last_used = std::chrono::duration_cast<std::chrono::duration<int, std::ratio<86400>>>(now - last_used_time).count();
+
+            if (days_since_last_used > 30) {
+                unused_files.push_back(file);
+            }
+        }
+    }
+}
+
+// Функция для отображения вкладки выбора папки
+void show_directory_selection_tab(WINDOW* win) {
+    mvwprintw(win, 1, 1, "Выберите папку для анализа:");
+    mvwprintw(win, 2, 1, "Текущая папка: %s", current_directory.c_str());
+    mvwprintw(win, 3, 1, "Содержимое:");
+
+    // Отображение содержимого директории
+    int y = 5;
+    for (size_t i = 0; i < directory_contents.size(); ++i) {
+        if (i == selected_index) {
+            wattron(win, A_REVERSE); // Выделение выбранного элемента
+        }
+        mvwprintw(win, y++, 1, "%s", directory_contents[i].c_str());
+        if (i == selected_index) {
+            wattroff(win, A_REVERSE);
+        }
+    }
+    wrefresh(win);
+}
+
+// Функция для отображения вкладки анализа
+void show_analysis_tab(WINDOW* win) {
+    mvwprintw(win, 1, 1, "Анализ папки: %s", current_directory.c_str());
+    mvwprintw(win, 2, 1, "Идет анализ...");
+    wrefresh(win);
+
+    analyze_directory(current_directory);
+
+    mvwprintw(win, 2, 1, "Анализ завершен. Нажмите любую клавишу для продолжения.");
+    wrefresh(win);
+    getch();
+}
+
+// Функция для отображения вкладки результатов анализа
+void show_results_tab(WINDOW* win) {
+    mvwprintw(win, 1, 1, "Результаты анализа:");
+    int y = 3;
+    for (const auto& file : unused_files) {
+        mvwprintw(win, y, 1, "Файл: %s, Размер: %zu байт, Последнее использование: %s",
+                 file.name.c_str(), file.size, ctime(&file.last_used));
+        y++;
+    }
+    wrefresh(win);
+}
+
+// Функция для отображения вкладки редактора
+void show_editor_tab(WINDOW* win) {
+    mvwprintw(win, 1, 1, "Редактор файлов:");
+    int y = 3;
+    for (size_t i = 0; i < unused_files.size(); ++i) {
+        mvwprintw(win, y, 1, "%zu. Файл: %s", i + 1, unused_files[i].name.c_str());
+        y++;
+    }
+    mvwprintw(win, y + 1, 1, "Введите номер файла для удаления или 0 для выхода:");
+    wrefresh(win);
+
+    char input[10];
+    echo();
+    curs_set(1);
+    mvwgetnstr(win, y + 2, 1, input, sizeof(input) - 1);
+    curs_set(0);
     noecho();
-    keypad(stdscr, TRUE);
-}
 
-// Главное меню
-void draw_main_menu(int highlight) {
-    const wchar_t *choices[] = {L"Анализ", L"Редактирование", L"Статистика", L"Выход"};
-    int n_choices = sizeof(choices) / sizeof(wchar_t *);
-    
-    clear();
-    mvprintw(0, 0, "Главное меню");
-    for(int i = 0; i < n_choices; i++) {
-        if(highlight == i) {
-            attron(COLOR_PAIR(2));
-            mvprintw(i + 2, 0, "> %ls", choices[i]); // %ls для wchar_t
-            attroff(COLOR_PAIR(2));
-        } else {
-            mvprintw(i + 2, 0, "  %ls", choices[i]);
-        }
+    int choice = atoi(input);
+    if (choice > 0 && choice <= unused_files.size()) {
+        fs::remove(unused_files[choice - 1].path);
+        unused_files.erase(unused_files.begin() + choice - 1);
     }
-    refresh();
-}
-
-// Заглушка для списка файлов
-void get_dummy_file_list(FileInfo *files, int *count) {
-    *count = 5; // Фиксированное количество файлов для заглушки
-    wcscpy(files[0].name, L"Файл1.txt"); files[0].size = 1024; strcpy(files[0].type, "file"); strcpy(files[0].last_used, "2025-03-20");
-    wcscpy(files[1].name, L"Папка_тест"); files[1].size = 0; strcpy(files[1].type, "dir"); strcpy(files[1].last_used, "2025-03-15");
-    wcscpy(files[2].name, L"Документ.doc"); files[2].size = 2048; strcpy(files[2].type, "file"); strcpy(files[2].last_used, "2025-03-10");
-    wcscpy(files[3].name, L"Фото.jpg"); files[3].size = 5120; strcpy(files[3].type, "file"); strcpy(files[3].last_used, "2025-03-01");
-    wcscpy(files[4].name, L"Архив.zip"); files[4].size = 3072; strcpy(files[4].type, "file"); strcpy(files[4].last_used, "2025-02-25");
-}
-
-// Отображение списка файлов
-void draw_file_list(FileInfo *files, int count, int highlight) {
-    clear();
-    mvprintw(0, 0, "Список файлов (Имя | Размер | Тип | Последнее использование)");
-    for(int i = 0; i < count; i++) {
-        if(highlight == i) {
-            attron(COLOR_PAIR(2));
-            mvprintw(i + 2, 0, "> %20ls | %10ld | %-5s | %s", 
-                files[i].name, files[i].size, files[i].type, files[i].last_used);
-            attroff(COLOR_PAIR(2));
-        } else {
-            mvprintw(i + 2, 0, "  %20ls | %10ld | %-5s | %s", 
-                files[i].name, files[i].size, files[i].type, files[i].last_used);
-        }
-    }
-    refresh();
-}
-
-// Панель анализа (заглушка)
-void draw_analysis_panel(FileInfo *files, int count) {
-    clear();
-    mvprintw(0, 0, "Панель анализа");
-    mvprintw(2, 0, "Старые файлы (>30 дней):");
-    mvprintw(3, 0, "- %ls (Последнее использование: %s)", files[4].name, files[4].last_used);
-    mvprintw(5, 0, "Дубликаты: (не найдено)");
-    mvprintw(6, 0, "Пустые директории: (не найдено)");
-    refresh();
-}
-
-// Панель редактирования (заглушка)
-void draw_edit_panel(FileInfo *files, int count, int highlight) {
-    clear();
-    mvprintw(0, 0, "Панель редактирования");
-    mvprintw(2, 0, "Выбранный файл: %ls", files[highlight].name);
-    mvprintw(4, 0, "Доступные действия:");
-    mvprintw(5, 0, "- Удалить");
-    mvprintw(6, 0, "- Переместить");
-    mvprintw(7, 0, "- Переименовать");
-    mvprintw(9, 0, "Нажмите Enter для действия, Esc для выхода");
-    refresh();
-}
-
-// Панель статистики (заглушка)
-void draw_stats_panel() {
-    clear();
-    mvprintw(0, 0, "Статистика файловой системы");
-    mvprintw(2, 0, "Общий размер файлов: 11.2 КБ");
-    mvprintw(3, 0, "Количество файлов: 4");
-    mvprintw(4, 0, "Количество директорий: 1");
-    mvprintw(6, 0, "График использования:");
-    mvprintw(7, 0, "[#####     ] 50%% занято");
-    refresh();
-}
-
-// Панель логов (заглушка)
-void draw_logs_panel() {
-    clear();
-    mvprintw(0, 0, "Логи действий");
-    mvprintw(2, 0, "2025-03-22 10:00: Удалён файл 'Старый_файл.txt'");
-    mvprintw(3, 0, "2025-03-22 10:01: Перемещена папка 'Архив'");
-    refresh();
 }
 
 int main() {
-    init_ncurses();
-    
-    MenuState state = MENU_MAIN;
-    int highlight = 0;
-    int ch;
-    FileInfo files[MAX_FILES];
-    int file_count = 0;
-    
-    while(1) {
-        switch(state) {
-            case MENU_MAIN:
-                draw_main_menu(highlight);
-                ch = getch();
-                switch(ch) {
-                    case KEY_UP:
-                        if(highlight > 0) highlight--;
-                        break;
-                    case KEY_DOWN:
-                        if(highlight < 3) highlight++;
-                        break;
-                    case 10: // Enter
-                        if(highlight == 0) state = MENU_ANALYSIS;
-                        else if(highlight == 1) state = MENU_EDIT;
-                        else if(highlight == 2) state = MENU_STATS;
-                        else if(highlight == 3) goto exit;
-                        highlight = 0;
-                        break;
-                    case 27: // Esc
-                        goto exit;
-                }
+    // Инициализация ncurses
+    setlocale(LC_ALL, "");
+    initscr();
+    cbreak();
+    noecho();
+    keypad(stdscr, TRUE);
+
+    // Обновление списка содержимого текущей директории
+    update_directory_contents();
+
+    // Основной цикл программы
+    int current_tab = 0;
+    while (true) {
+        clear();
+        printw("Файловый анализатор и редактор\n");
+        printw("1. Выбор папки\n2. Анализ\n3. Результаты\n4. Редактор\n5. Выход\n");
+        printw("Текущая вкладка: %d\n", current_tab + 1);
+        refresh();
+
+        // Отображение текущей вкладки
+        WINDOW* win = newwin(LINES - 5, COLS, 5, 0);
+        box(win, 0, 0);
+        switch (current_tab) {
+            case 0:
+                show_directory_selection_tab(win);
                 break;
-                
-            case MENU_FILES:
-                get_dummy_file_list(files, &file_count);
-                draw_file_list(files, file_count, highlight);
-                ch = getch();
-                if(ch == KEY_UP && highlight > 0) highlight--;
-                else if(ch == KEY_DOWN && highlight < file_count - 1) highlight++;
-                else if(ch == 27) state = MENU_MAIN;
+            case 1:
+                show_analysis_tab(win);
                 break;
-                
-            case MENU_ANALYSIS:
-                get_dummy_file_list(files, &file_count);
-                draw_analysis_panel(files, file_count);
-                ch = getch();
-                if(ch == 27) state = MENU_MAIN;
+            case 2:
+                show_results_tab(win);
                 break;
-                
-            case MENU_EDIT:
-                get_dummy_file_list(files, &file_count);
-                draw_edit_panel(files, file_count, highlight);
-                ch = getch();
-                if(ch == KEY_UP && highlight > 0) highlight--;
-                else if(ch == KEY_DOWN && highlight < file_count - 1) highlight++;
-                else if(ch == 27) state = MENU_MAIN;
+            case 3:
+                show_editor_tab(win);
                 break;
-                
-            case MENU_STATS:
-                draw_stats_panel();
-                ch = getch();
-                if(ch == 27) state = MENU_MAIN;
+            case 4:
+                endwin();
+                return 0;
+        }
+        wrefresh(win);
+        delwin(win);
+
+        // Обработка ввода пользователя
+        int ch = getch();
+        if (current_tab == 0) {
+            // Навигация по папкам
+            switch (ch) {
+                case KEY_UP:
+                    if (selected_index > 0) {
+                        selected_index--;
+                    }
+                    break;
+                case KEY_DOWN:
+                    if (selected_index < directory_contents.size() - 1) {
+                        selected_index++;
+                    }
+                    break;
+                case 10: // Enter
+                    {
+                        std::string selected_item = directory_contents[selected_index];
+                        std::string new_path = current_directory + "/" + selected_item;
+                        if (selected_item == "..") {
+                            // Возврат в родительскую директорию
+                            current_directory = fs::path(current_directory).parent_path().string();
+                        } else if (fs::is_directory(new_path)) {
+                            current_directory = new_path;
+                        }
+                        update_directory_contents();
+                        selected_index = 0;
+                    }
+                    break;
+                case KEY_BACKSPACE:
+                case 127: // Backspace
+                    // Возврат в родительскую директорию
+                    if (current_directory != "/") {
+                        current_directory = fs::path(current_directory).parent_path().string();
+                        update_directory_contents();
+                        selected_index = 0;
+                    }
+                    break;
+            }
+        }
+
+        // Переключение между вкладками
+        switch (ch) {
+            case KEY_LEFT:
+                current_tab = (current_tab - 1 + 5) % 5;
                 break;
-                
-            case MENU_LOGS:
-                draw_logs_panel();
-                ch = getch();
-                if(ch == 27) state = MENU_MAIN;
+            case KEY_RIGHT:
+                current_tab = (current_tab + 1) % 5;
+                break;
+            case 'q':
+                endwin();
+                return 0;
+            case '\t': // Tab
+                current_tab = (current_tab + 1) % 5;
                 break;
         }
     }
-    
-exit:
+
     endwin();
     return 0;
 }
