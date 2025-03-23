@@ -2,7 +2,7 @@ CXX = g++
 CXXFLAGS = -std=c++17 -Wall -Wextra
 LDFLAGS = -lncursesw -lstdc++fs  # Добавлено для компоновки
 TARGET = cursach
-SRCS = main.cpp module_analization.cpp
+SRCS = main.cpp module_analization.cpp module_redactor.cpp
 
 # Цель по умолчанию
 all: build

@@ -6,7 +6,8 @@
 #include <chrono>
 #include <algorithm>
 #include <cstring>
-#include "module_analization.h"
+#include "module_analization.h" 
+#include "module_redactor.h"    
 
 namespace fs = std::filesystem;
 
@@ -26,7 +27,263 @@ void update_directory_contents() {
     }
 }
 
-// Функция для отображения вкладки выбора папки
+// Функция ввода строки с отображением в реальном времени
+std::string input_with_display(WINDOW* win, int y, int x, const std::string& prompt) {
+    std::string input;
+    curs_set(1); // Включаем курсор
+    echo();      // Включаем отображение ввода
+    mvwprintw(win, y, x, "%s", prompt.c_str());
+    wrefresh(win);
+
+    char ch;
+    while ((ch = wgetch(win))) {
+        if (ch == '\n') { // Enter завершает ввод
+            break;
+        } else if (ch == 127 || ch == KEY_BACKSPACE) { // Backspace
+            if (!input.empty()) {
+                input.pop_back();
+                mvwprintw(win, y, x + prompt.length() + input.length(), " ");
+                wmove(win, y, x + prompt.length() + input.length());
+            }
+        } else {
+            input += ch;
+        }
+        mvwprintw(win, y, x + prompt.length(), "%s", input.c_str());
+        wrefresh(win);
+    }
+
+    noecho();
+    curs_set(0);
+    return input;
+}
+
+// Функция редактирования файла (оставляем как есть, без изменений)
+void edit_file_content(WINDOW* win, const std::string& file_path) {
+    std::string content = redactor::read_file(file_path);
+    bool is_modified = false;
+
+    WINDOW* edit_win = newwin(LINES - 2, COLS - 2, 1, 1);
+    box(edit_win, 0, 0);
+    keypad(edit_win, TRUE);
+    curs_set(1);
+
+    mvwprintw(edit_win, 0, 2, "Редактор: %s", file_path.c_str());
+    mvwprintw(edit_win, LINES - 3, 2, "Ctrl+S: Сохранить | Ctrl+Q: Выйти");
+    wrefresh(edit_win);
+
+    int y = 1, x = 1;
+    for (char ch : content) {
+        if (ch == '\n') {
+            y++;
+            x = 1;
+        } else if (x < COLS - 2) {
+            mvwaddch(edit_win, y, x++, ch);
+        }
+    }
+    wmove(edit_win, y, x);
+
+    int ch;
+    while ((ch = wgetch(edit_win))) {
+        switch (ch) {
+            case KEY_BACKSPACE:
+            case 127:
+                if (x > 1) {
+                    x--;
+                    mvwaddch(edit_win, y, x, ' ');
+                    wmove(edit_win, y, x);
+                } else if (y > 1) {
+                    y--;
+                    x = COLS - 3;
+                    while (mvwinch(edit_win, y, x) == ' ' && x > 1) x--;
+                    x++;
+                    wmove(edit_win, y, x);
+                }
+                is_modified = true;
+                break;
+            case '\n':
+                y++;
+                x = 1;
+                wmove(edit_win, y, x);
+                is_modified = true;
+                break;
+            case 19: // Ctrl+S
+                {
+                    std::string new_content;
+                    for (int i = 1; i < LINES - 3; i++) {
+                        char line[COLS - 2];
+                        mvwinnstr(edit_win, i, 1, line, COLS - 2);
+                        new_content += line;
+                        new_content += '\n';
+                    }
+                    if (redactor::update_file(file_path, new_content)) {
+                        mvwprintw(edit_win, LINES - 2, 2, "Файл сохранен.");
+                        is_modified = false;
+                    } else {
+                        mvwprintw(edit_win, LINES - 2, 2, "Ошибка сохранения!");
+                    }
+                    wrefresh(edit_win);
+                    break;
+                }
+            case 17: // Ctrl+Q
+                if (is_modified) {
+                    mvwprintw(edit_win, LINES - 2, 2, "Несохраненные изменения. Выйти? (y/n)");
+                    wrefresh(edit_win);
+                    int confirm = wgetch(edit_win);
+                    if (confirm == 'y' || confirm == 'Y') {
+                        goto exit_editor;
+                    }
+                } else {
+                    goto exit_editor;
+                }
+                break;
+            default:
+                if (x < COLS - 2) {
+                    mvwaddch(edit_win, y, x++, ch);
+                    is_modified = true;
+                }
+                break;
+        }
+        wmove(edit_win, y, x);
+        wrefresh(edit_win);
+    }
+
+exit_editor:
+    delwin(edit_win);
+    curs_set(0);
+}
+
+
+// Обновленная функция вкладки редактора
+void show_editor_tab(WINDOW* win) {
+    bool exit_tab = false;
+    while (!exit_tab) {
+        update_directory_contents(); // Обновляем содержимое текущей директории
+        int y = 1;
+
+        mvwprintw(win, y++, 1, "Редактор: %s", current_directory.c_str());
+        mvwprintw(win, y++, 1, "Содержимое текущей папки:");
+
+        // Отображение списка файлов и папок
+        for (size_t i = 0; i < directory_contents.size(); ++i) {
+            std::string item = directory_contents[i];
+            fs::path item_path = current_directory + "/" + item;
+            if (i == selected_index) {
+                wattron(win, A_REVERSE); // Выделение выбранного элемента
+            }
+            if (item == ".." || fs::is_directory(item_path)) {
+                mvwprintw(win, y++, 1, "[D] %s", item.c_str());
+            } else {
+                mvwprintw(win, y++, 1, "[F] %s", item.c_str());
+            }
+            if (i == selected_index) {
+                wattroff(win, A_REVERSE);
+            }
+        }
+
+        mvwprintw(win, y++, 1, "Управление:");
+        mvwprintw(win, y++, 1, "↑/↓: Навигация | Enter: Открыть | Del: Удалить");
+        mvwprintw(win, y++, 1, "Ctrl+D: Новая папка | Ctrl+N: Новый файл | Q: Выход");
+        wrefresh(win);
+
+        // Обработка ввода
+        int ch = wgetch(win);
+        switch (ch) {
+            case KEY_UP:
+                if (selected_index > 0) selected_index--;
+                break;
+            case KEY_DOWN:
+                if (selected_index < directory_contents.size() - 1) selected_index++;
+                break;
+            case 10: // Enter
+                {
+                    std::string selected_item = directory_contents[selected_index];
+                    std::string new_path = current_directory + "/" + selected_item;
+                    if (selected_item == "..") {
+                        current_directory = fs::path(current_directory).parent_path().string();
+                        update_directory_contents();
+                        selected_index = 0;
+                    } else if (fs::is_directory(new_path)) {
+                        current_directory = new_path;
+                        update_directory_contents();
+                        selected_index = 0;
+                    } else if (fs::exists(new_path)) {
+                        edit_file_content(win, new_path); // Открываем файл для редактирования
+                    }
+                }
+                break;
+            case KEY_DC: // Delete
+                {
+                    std::string selected_item = directory_contents[selected_index];
+                    if (selected_item != "..") {
+                        fs::path item_path = current_directory + "/" + selected_item;
+                        mvwprintw(win, y, 1, "Удалить '%s'? (y/n)", selected_item.c_str());
+                        wrefresh(win);
+                        int confirm = getch();
+                        if (confirm == 'y' || confirm == 'Y') {
+                            if (fs::is_directory(item_path)) {
+                                if (redactor::delete_directory(item_path)) {
+                                    mvwprintw(win, y + 1, 1, "Папка удалена.");
+                                } else {
+                                    mvwprintw(win, y + 1, 1, "Ошибка удаления папки!");
+                                }
+                            } else {
+                                if (redactor::delete_file(item_path)) {
+                                    mvwprintw(win, y + 1, 1, "Файл удален.");
+                                } else {
+                                    mvwprintw(win, y + 1, 1, "Ошибка удаления файла!");
+                                }
+                            }
+                            update_directory_contents();
+                            if (selected_index >= directory_contents.size()) {
+                                selected_index = directory_contents.size() - 1;
+                            }
+                        }
+                        wrefresh(win);
+                        getch();
+                    }
+                }
+                break;
+            case 4: // Ctrl+D (новая папка)
+                {
+                    std::string dirname = input_with_display(win, y, 1, "Имя новой папки: ");
+                    fs::path dir_path = current_directory + "/" + dirname;
+                    if (fs::exists(dir_path)) {
+                        mvwprintw(win, y + 1, 1, "Ошибка: Папка '%s' уже существует!", dirname.c_str());
+                    } else if (redactor::create_directory(dir_path)) {
+                        mvwprintw(win, y + 1, 1, "Папка '%s' создана.", dirname.c_str());
+                        update_directory_contents();
+                    } else {
+                        mvwprintw(win, y + 1, 1, "Ошибка создания папки!");
+                    }
+                    wrefresh(win);
+                    getch();
+                }
+                break;
+            case 14: // Ctrl+N (новый файл)
+                {
+                    std::string filename = input_with_display(win, y, 1, "Имя нового файла: ");
+                    fs::path file_path = current_directory + "/" + filename;
+                    if (fs::exists(file_path)) {
+                        mvwprintw(win, y + 1, 1, "Ошибка: Файл '%s' уже существует!", filename.c_str());
+                    } else if (redactor::create_file(file_path)) {
+                        mvwprintw(win, y + 1, 1, "Файл '%s' создан.", filename.c_str());
+                        update_directory_contents();
+                    } else {
+                        mvwprintw(win, y + 1, 1, "Ошибка создания файла!");
+                    }
+                    wrefresh(win);
+                    getch();
+                }
+                break;
+            case 'q':
+            case 'Q':
+                exit_tab = true; // Выход из вкладки редактора
+                break;
+        }
+    }
+}
+
+
 void show_directory_selection_tab(WINDOW* win) {
     mvwprintw(win, 1, 1, "Выберите папку для анализа:");
     mvwprintw(win, 2, 1, "Текущая папка: %s", current_directory.c_str());
@@ -35,17 +292,28 @@ void show_directory_selection_tab(WINDOW* win) {
     // Отображение содержимого директории
     int y = 5;
     for (size_t i = 0; i < directory_contents.size(); ++i) {
+        std::string item = directory_contents[i];
+        fs::path item_path = current_directory + "/" + item;
+
         if (i == selected_index) {
             wattron(win, A_REVERSE); // Выделение выбранного элемента
         }
-        mvwprintw(win, y++, 1, "%s", directory_contents[i].c_str());
+
+        if (fs::is_directory(item_path)) {
+            mvwprintw(win, y, 1, "[D] %s", item.c_str()); // Папка
+        } else {
+            mvwprintw(win, y, 1, "[F] %s", item.c_str()); // Файл
+        }
+
         if (i == selected_index) {
             wattroff(win, A_REVERSE);
         }
+        y++;
     }
     wrefresh(win);
 }
 
+// Функция для отображения вкладки анализа
 void show_analysis_tab(WINDOW* win) {
     mvwprintw(win, 1, 1, "Анализ папки: %s", current_directory.c_str());
     mvwprintw(win, 2, 1, "Идет анализ...");
@@ -61,6 +329,7 @@ void show_analysis_tab(WINDOW* win) {
     getch();
 }
 
+// Функция для отображения вкладки результатов анализа
 void show_results_tab(WINDOW* win) {
     mvwprintw(win, 1, 1, "Результаты анализа:");
     int y = 3;
@@ -92,44 +361,20 @@ void show_results_tab(WINDOW* win) {
     wrefresh(win);
 }
 
-// Функция для отображения вкладки редактора
-void show_editor_tab(WINDOW* win) {
-    mvwprintw(win, 1, 1, "Редактор файлов:");
-    int y = 3;
-    auto unused_files = find_unused_files_recursive(current_directory, 30);
-    for (size_t i = 0; i < unused_files.size(); ++i) {
-        mvwprintw(win, y, 1, "%zu. Файл: %s", i + 1, unused_files[i].name.c_str());
-        y++;
-    }
-    mvwprintw(win, y + 1, 1, "Введите номер файла для удаления или 0 для выхода:");
-    wrefresh(win);
 
-    char input[10];
-    echo();
-    curs_set(1);
-    mvwgetnstr(win, y + 2, 1, input, sizeof(input) - 1);
-    curs_set(0);
-    noecho();
 
-    size_t choice = atoi(input);
-    if (choice > 0 && choice <= unused_files.size()) {
-        fs::remove(unused_files[choice - 1].path);
-    }
-}
 
+// Основная программа (оставляем как есть с минимальными изменениями)
 int main() {
-    // Инициализация ncurses
-    setlocale(LC_ALL, "");
+    setlocale(LC_ALL, ""); // Поддержка русского языка
     initscr();
     cbreak();
     noecho();
     keypad(stdscr, TRUE);
 
-    // Обновление списка содержимого текущей директории
     update_directory_contents();
-
-    // Основной цикл программы
     int current_tab = 0;
+
     while (true) {
         clear();
         printw("Файловый анализатор и редактор\n");
@@ -137,50 +382,32 @@ int main() {
         printw("Текущая вкладка: %d\n", current_tab + 1);
         refresh();
 
-        // Отображение текущей вкладки
         WINDOW* win = newwin(LINES - 5, COLS, 5, 0);
         box(win, 0, 0);
         switch (current_tab) {
-            case 0:
-                show_directory_selection_tab(win);
-                break;
-            case 1:
-                show_analysis_tab(win);
-                break;
-            case 2:
-                show_results_tab(win);
-                break;
-            case 3:
-                show_editor_tab(win);
-                break;
-            case 4:
-                endwin();
-                return 0;
+            case 0: show_directory_selection_tab(win); break;
+            case 1: show_analysis_tab(win); break;
+            case 2: show_results_tab(win); break;
+            case 3: show_editor_tab(win); break;
+            case 4: endwin(); return 0;
         }
         wrefresh(win);
         delwin(win);
 
-        // Обработка ввода пользователя
         int ch = getch();
         if (current_tab == 0) {
-            // Навигация по папкам
             switch (ch) {
                 case KEY_UP:
-                    if (selected_index > 0) {
-                        selected_index--;
-                    }
+                    if (selected_index > 0) selected_index--;
                     break;
                 case KEY_DOWN:
-                    if (selected_index < directory_contents.size() - 1) {
-                        selected_index++;
-                    }
+                    if (selected_index < directory_contents.size() - 1) selected_index++;
                     break;
                 case 10: // Enter
                     {
                         std::string selected_item = directory_contents[selected_index];
                         std::string new_path = current_directory + "/" + selected_item;
                         if (selected_item == "..") {
-                            // Возврат в родительскую директорию
                             current_directory = fs::path(current_directory).parent_path().string();
                         } else if (fs::is_directory(new_path)) {
                             current_directory = new_path;
@@ -189,32 +416,13 @@ int main() {
                         selected_index = 0;
                     }
                     break;
-                case KEY_BACKSPACE:
-                case 127: // Backspace
-                    // Возврат в родительскую директорию
-                    if (current_directory != "/") {
-                        current_directory = fs::path(current_directory).parent_path().string();
-                        update_directory_contents();
-                        selected_index = 0;
-                    }
-                    break;
             }
         }
-
-        // Переключение между вкладками
         switch (ch) {
-            case KEY_LEFT:
-                current_tab = (current_tab - 1 + 5) % 5;
-                break;
-            case KEY_RIGHT:
-                current_tab = (current_tab + 1) % 5;
-                break;
-            case 'q':
-                endwin();
-                return 0;
-            case '\t': // Tab
-                current_tab = (current_tab + 1) % 5;
-                break;
+            case KEY_LEFT: current_tab = (current_tab - 1 + 5) % 5; break;
+            case KEY_RIGHT: current_tab = (current_tab + 1) % 5; break;
+            case 'q': endwin(); return 0;
+            case '\t': current_tab = (current_tab + 1) % 5; break;
         }
     }
 
