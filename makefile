@@ -1,29 +1,30 @@
-CXX = g++
-CXXFLAGS = -std=c++17 -Wall -Wextra
-LDFLAGS = -lncursesw -lstdc++fs  # Добавлено для компоновки
+CC = g++
+CFLAGS = -std=c++17 -Wall -Wextra
+LDFLAGS = -lncursesw
 TARGET = cursach
-SRCS = main.cpp module_analization.cpp module_redactor.cpp
+OBJECTS = main.o module_analization.o module_redactor.o UI.o state_manager.o
 
-# Цель по умолчанию
-all: build
+all: $(TARGET)
 
-# Компиляция программы
-build: $(SRCS)
-	$(CXX) $(CXXFLAGS) -o $(TARGET) $(SRCS) $(LDFLAGS)  # Добавлено $(LDFLAGS)
-	@echo "Программа успешно скомпилирована."
+$(TARGET): $(OBJECTS)
+	$(CC) $(OBJECTS) -o $(TARGET) $(LDFLAGS)
 
-# Запуск программы
-run: $(TARGET)
-	@echo "Запуск программы..."
-	./$(TARGET)
+main.o: main.cpp state_manager.h UI.h
+	$(CC) $(CFLAGS) -c main.cpp -o main.o
 
-# Очистка, перекомпиляция и запуск
-rebuild_run: clean build run
+module_analization.o: module_analization.cpp module_analization.h
+	$(CC) $(CFLAGS) -c module_analization.cpp -o module_analization.o
 
-# Очистка скомпилированных файлов
+module_redactor.o: module_redactor.cpp module_redactor.h
+	$(CC) $(CFLAGS) -c module_redactor.cpp -o module_redactor.o
+
+UI.o: UI.cpp UI.h state_manager.h module_redactor.h
+	$(CC) $(CFLAGS) -c UI.cpp -o UI.o
+
+state_manager.o: state_manager.cpp state_manager.h module_analization.h module_redactor.h UI.h
+	$(CC) $(CFLAGS) -c state_manager.cpp -o state_manager.o
+
 clean:
-	rm -f $(TARGET)
-	@echo "Скомпилированные файлы удалены."
+	rm -f $(TARGET) $(OBJECTS)
 
-# Флаг для предотвращения конфликтов с файлами
-.PHONY: all build run rebuild_run clean
+rebuild: clean all

@@ -1,220 +1,128 @@
 #include "module_analization.h"
-#include <iostream>
-#include <vector>
-#include <string>
-#include <filesystem>
-#include <chrono>
-#include <unordered_map>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <algorithm>
 #include <fstream>
+#include <cstring>
+#include <map>
 
+std::vector<FileInfo> list_directory(const std::string& dir) {
+    std::vector<FileInfo> files;
+    DIR* dp = opendir(dir.c_str());
+    if (!dp) return files;
 
-namespace fs = std::filesystem;
-
-// Функция для вычисления хэша файла по его содержимому
-std::string calculate_file_hash(const fs::path& file_path) {
-    std::ifstream file(file_path, std::ios::binary);
-    if (!file) {
-        throw std::runtime_error("Не удалось открыть файл: " + file_path.string());
+    struct dirent* entry;
+    while ((entry = readdir(dp))) {
+        std::string name = entry->d_name;
+        if (name == "." || name == "..") continue;
+        FileInfo info;
+        if (get_file_info(dir + "/" + name, info)) {
+            info.full_path = dir + "/" + name;
+            files.push_back(info);
+        }
     }
-
-    std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    return std::to_string(std::hash<std::string>{}(content));
+    closedir(dp);
+    std::sort(files.begin(), files.end(), [](const FileInfo& a, const FileInfo& b) {
+        if (a.is_dir != b.is_dir) return a.is_dir > b.is_dir;
+        return a.name < b.name;
+    });
+    return files;
 }
 
-// Функция для поиска файлов с одинаковым содержимым
-std::vector<std::vector<fs::path>> find_duplicate_files(const fs::path& directory) {
-    std::unordered_map<std::string, std::vector<fs::path>> hash_to_files;
-
-    for (const auto& entry : fs::directory_iterator(directory)) {
-        if (fs::is_regular_file(entry)) {
-            std::string file_hash = calculate_file_hash(entry.path());
-            hash_to_files[file_hash].push_back(entry.path());
-        }
-    }
-
-    std::vector<std::vector<fs::path>> duplicates;
-    for (const auto& [hash, files] : hash_to_files) {
-        if (files.size() > 1) {
-            duplicates.push_back(files);
-        }
-    }
-
-    return duplicates;
+bool get_file_info(const std::string& path, FileInfo& info) {
+    struct stat st;
+    if (stat(path.c_str(), &st) != 0) return false;
+    info.name = path.substr(path.find_last_of('/') + 1);
+    info.is_dir = S_ISDIR(st.st_mode);
+    info.size = st.st_size;
+    info.mode = st.st_mode;
+    info.mtime = st.st_mtime;
+    info.full_path = path;
+    return true;
 }
 
-// Рекурсивная функция для поиска файлов с одинаковым содержимым
-std::vector<std::vector<fs::path>> find_duplicate_files_recursive(const fs::path& directory) {
-    std::unordered_map<std::string, std::vector<fs::path>> hash_to_files;
-
-    // Рекурсивно обходим все файлы и подпапки
-    for (const auto& entry : fs::recursive_directory_iterator(directory)) {
-        if (fs::is_regular_file(entry)) {
-            std::string file_hash = calculate_file_hash(entry.path());
-            hash_to_files[file_hash].push_back(entry.path());
+std::vector<FileInfo> filter_files(const std::vector<FileInfo>& files, const std::string& pattern) {
+    std::vector<FileInfo> filtered;
+    for (const auto& file : files) {
+        if (file.name.find(pattern) != std::string::npos) {
+            filtered.push_back(file);
         }
     }
-
-    std::vector<std::vector<fs::path>> duplicates;
-    for (const auto& [hash, files] : hash_to_files) {
-        if (files.size() > 1) {
-            duplicates.push_back(files);
-        }
-    }
-
-    return duplicates;
+    return filtered;
 }
 
-// Функция для поиска пустых папок
-std::vector<fs::path> find_empty_directories(const fs::path& directory) {
-    std::vector<fs::path> empty_dirs;
-
-    for (const auto& entry : fs::recursive_directory_iterator(directory)) {
-        if (fs::is_directory(entry) && fs::is_empty(entry)) {
-            empty_dirs.push_back(entry.path());
+std::vector<FileInfo> find_empty_subdirs(const std::string& dir) {
+    std::vector<FileInfo> empty_dirs;
+    std::vector<FileInfo> files = list_directory(dir);
+    for (const auto& file : files) {
+        if (file.is_dir) {
+            std::string subdir = dir + "/" + file.name;
+            auto subfiles = list_directory(subdir);
+            if (subfiles.empty()) {
+                FileInfo info = file;
+                info.full_path = subdir;
+                empty_dirs.push_back(info);
+            } else {
+                auto sub_empty = find_empty_subdirs(subdir);
+                empty_dirs.insert(empty_dirs.end(), sub_empty.begin(), sub_empty.end());
+            }
         }
     }
-
     return empty_dirs;
 }
-// Функция для преобразования file_time_type в system_clock::time_point
-std::chrono::system_clock::time_point to_system_time(const fs::file_time_type& ft) {
-    return std::chrono::time_point_cast<std::chrono::system_clock::duration>(
-        ft - fs::file_time_type::clock::now() + std::chrono::system_clock::now());
+
+std::vector<std::vector<FileInfo>> find_duplicate_files(const std::string& dir) {
+    std::vector<std::vector<FileInfo>> duplicates;
+    std::map<std::string, std::vector<FileInfo>> hash_map;
+    std::vector<FileInfo> files = list_directory(dir);
+    
+    for (const auto& file : files) {
+        if (!file.is_dir) {
+            std::string path = dir + "/" + file.name;
+            std::ifstream in(path, std::ios::binary);
+            if (!in) continue;
+            std::string hash;
+            char buffer[4096];
+            while (in.read(buffer, sizeof(buffer))) {
+                hash += std::to_string(std::hash<std::string>{}(std::string(buffer, sizeof(buffer))));
+            }
+            hash += std::to_string(std::hash<std::string>{}(std::string(buffer, in.gcount())));
+            FileInfo info = file;
+            info.full_path = path;
+            hash_map[hash].push_back(info);
+        }
+    }
+    
+    for (const auto& pair : hash_map) {
+        if (pair.second.size() > 1) {
+            duplicates.push_back(pair.second);
+        }
+    }
+    return duplicates;
 }
-// Функция для преобразования system_clock::time_point в file_time_type
-fs::file_time_type to_file_time(const std::chrono::system_clock::time_point& tp) {
-    // Разница между system_clock и file_time_type::clock
-    auto system_now = std::chrono::system_clock::now();
-    auto file_now = fs::file_time_type::clock::now();
-    auto diff = file_now - fs::file_time_type::clock::now();
 
-    // Преобразуем system_clock::time_point в file_time_type
-    return fs::file_time_type::clock::now() + (tp - system_now);
-}
-
-std::vector<FileInfo> find_unused_files(const fs::path& directory, int days_threshold) {
-    std::vector<FileInfo> unused_files;
-    auto now = std::chrono::system_clock::now();
-
-    for (const auto& entry : fs::directory_iterator(directory)) {
-        if (fs::is_regular_file(entry)) {
-            // Получаем информацию о файле
-            FileInfo file_info;
-            file_info.name = entry.path().filename().string();
-            file_info.path = entry.path().string();
-            file_info.size = fs::file_size(entry);
-
-            // Получаем время последнего изменения файла
-            auto last_used_time = fs::last_write_time(entry);
-            auto last_used_system_time = std::chrono::system_clock::now() - (fs::file_time_type::clock::now() - last_used_time);
-            auto last_used_duration = std::chrono::duration_cast<std::chrono::hours>(now - last_used_system_time).count() / 24;
-
-            // Сохраняем время последнего использования
-            file_info.last_used = std::chrono::system_clock::to_time_t(last_used_system_time);
-
-            // Проверяем, превышает ли время последнего использования порог
-            if (last_used_duration > days_threshold) {
-                unused_files.push_back(file_info);
+std::vector<FileInfo> find_old_files(const std::string& dir, int days) {
+    std::vector<FileInfo> old_files;
+    time_t now = time(nullptr);
+    std::vector<FileInfo> files = list_directory(dir);
+    for (const auto& file : files) {
+        if (!file.is_dir) {
+            double seconds = difftime(now, file.mtime);
+            if (seconds > days * 24 * 3600) {
+                old_files.push_back(file);
             }
         }
     }
-
-    return unused_files;
-}
-// Рекурсивная функция для поиска файлов, которые давно не использовались
-std::vector<FileInfo> find_unused_files_recursive(const fs::path& directory, int days_threshold) {
-    std::vector<FileInfo> unused_files;
-    auto now = std::chrono::system_clock::now();
-
-    // Рекурсивно обходим все файлы и подпапки
-    for (const auto& entry : fs::recursive_directory_iterator(directory)) {
-        if (fs::is_regular_file(entry)) {
-            FileInfo file_info;
-            file_info.name = entry.path().filename().string();
-            file_info.path = entry.path().string();
-            file_info.size = fs::file_size(entry);
-
-            // Получаем время последнего изменения файла
-            auto last_used_time = fs::last_write_time(entry);
-            auto last_used_system_time = std::chrono::system_clock::now() - (fs::file_time_type::clock::now() - last_used_time);
-            auto last_used_duration = std::chrono::duration_cast<std::chrono::hours>(now - last_used_system_time).count() / 24;
-
-            // Сохраняем время последнего использования
-            file_info.last_used = std::chrono::system_clock::to_time_t(last_used_system_time);
-
-            // Проверяем, превышает ли время последнего использования порог
-            if (last_used_duration > days_threshold) {
-                unused_files.push_back(file_info);
-            }
-        }
-    }
-
-    return unused_files;
+    return old_files;
 }
 
-
-
-// Функция для изменения времени последнего изменения файла
-void set_file_last_write_time(const fs::path& file_path, int days_ago) {
-    auto now = std::chrono::system_clock::now();
-    auto new_time = now - std::chrono::hours(24 * days_ago);
-    fs::last_write_time(file_path, to_file_time(new_time));
+bool change_directory(const std::string& current_dir, const std::string& target, std::string& new_dir) {
+    std::string path = (target == "..") ? current_dir.substr(0, current_dir.find_last_of('/')) : current_dir + "/" + target;
+    if (path.empty()) path = "/";
+    char* real_path = realpath(path.c_str(), nullptr);
+    if (!real_path) return false;
+    new_dir = real_path;
+    free(real_path);
+    return true;
 }
-
-// // Тесты для проверки функций
-// void run_tests() {
-//     // // Создаем временную директорию для тестов
-//     fs::path test_dir = "/home/ilya/Рабочий стол/Cursach/test_dir";
-//     // fs::create_directories(test_dir);
-
-//     // // Создаем тестовые файлы
-//     // fs::path file1 = test_dir / "file1.txt";
-//     // fs::path file2 = test_dir / "file2.txt";
-//     // fs::path file3 = test_dir / "file3.txt";
-//     // fs::path empty_dir1 = test_dir / "empty_dir1";
-//     // fs::path empty_dir2 = test_dir / "empty_dir2";
-
-//     // std::ofstream(file1) << "Hello, World!";
-//     // std::ofstream(file2) << "Hello, World!";
-//     // std::ofstream(file3) << "Different content";
-//     // fs::create_directories(empty_dir1);
-//     // fs::create_directories(empty_dir2);
-
-//     // // Устанавливаем старую дату последнего изменения для file1 и file2
-//     // set_file_last_write_time(file1, 40); // 40 дней назад
-//     // set_file_last_write_time(file2, 35); // 35 дней назад
-//     // set_file_last_write_time(file3, 10); // 10 дней назад
-
-//     // Тест для поиска файлов, которые давно не использовались
-//     auto unused_files = find_unused_files(test_dir, 30); // Порог 30 дней
-//     std::cout << "Файлы, которые не использовались более 30 дней:\n";
-//     for (const auto& file : unused_files) {
-//         std::cout << file << "\n";
-//     }
-
-//     // Тест для поиска файлов с одинаковым содержимым
-//     auto duplicate_files = find_duplicate_files(test_dir);
-//     std::cout << "\nФайлы с одинаковым содержимым:\n";
-//     for (const auto& group : duplicate_files) {
-//         for (const auto& file : group) {
-//             std::cout << file << "\n";
-//         }
-//         std::cout << "----\n";
-//     }
-
-//     // Тест для поиска пустых папок
-//     auto empty_dirs = find_empty_directories(test_dir);
-//     std::cout << "\nПустые папки:\n";
-//     for (const auto& dir : empty_dirs) {
-//         std::cout << dir << "\n";
-//     }
-
-//     // Удаляем временную директорию после тестов
-//     // fs::remove_all(test_dir);
-// }
-
-// int main() {
-//     run_tests();
-//     return 0;
-// }
