@@ -3,7 +3,8 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include "analysis.h"
+#include <string>
+#include <vector>
 
 // Режимы работы программы
 typedef enum {
@@ -23,20 +24,36 @@ typedef struct {
 // Структура состояния редактора
 typedef struct {
     char **lines;       // Массив строк
-    size_t line_count;  // Количество строк
-    size_t capacity;    // Вместимость массива строк
+    long long line_count;  // Количество строк
+    long long capacity;    // Вместимость массива строк
     unsigned int cursor_x;  // Позиция курсора по X
     unsigned int cursor_y;  // Позиция курсора по Y
     unsigned int scroll_y;  // Смещение прокрутки
 } EditorState;
+
+// Структура для хранения информации о дубликатах
+typedef struct {
+    std::string hash;          // MD5-хеш файла
+    std::vector<std::string> paths; // Список путей к файлам с одинаковым хешем
+} DuplicateInfo;
+
+// Структура для хранения результатов анализа
+typedef struct {
+    std::vector<std::string> old_files;      // Давно не используемые файлы
+    std::vector<std::string> empty_files;    // Пустые файлы
+    std::vector<std::string> empty_dirs;     // Пустые директории
+    std::vector<DuplicateInfo> duplicates;   // Дубликаты
+    long long selected_index;                    // Индекс выбранного элемента
+    enum { SECTION_OLD, SECTION_EMPTY_FILES, SECTION_EMPTY_DIRS, SECTION_DUPLICATES } section; // Текущий раздел
+} AnalysisResult;
 
 // Структура состояния приложения
 typedef struct {
     AppMode mode;               // Текущий режим
     char *current_dir;          // Текущая директория
     FileInfo *files;            // Список файлов/папок
-    size_t file_count;          // Количество файлов/папок
-    unsigned int selected_index;  // Индекс выбранного файла/папки
+    long long file_count;          // Количество файлов/папок
+    long long selected_index;  // Индекс выбранного файла/папки
     char *edit_file;            // Имя файла, открытого в редакторе
     EditorState *editor_state;  // Состояние редактора
     AnalysisResult *analysis_result; // Результаты анализа
