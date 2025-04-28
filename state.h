@@ -15,7 +15,7 @@ typedef enum {
 
 // Структура для хранения информации о файле/папке
 typedef struct {
-    char *name;         // Имя файла/папки
+    char *name;         // Имя файла/папки (может быть относительный путь при поиске)
     int is_dir;         // 1 = папка, 0 = файл
     off_t size;         // Размер в байтах
     time_t mtime;       // Время последнего изменения
@@ -51,12 +51,13 @@ typedef struct {
 typedef struct {
     AppMode mode;               // Текущий режим
     char *current_dir;          // Текущая директория
-    FileInfo *files;            // Список файлов/папок
-    long long file_count;          // Количество файлов/папок
-    long long selected_index;  // Индекс выбранного файла/папки
+    std::vector<FileInfo> files; // Список файлов/папок
+    long long selected_index;   // Индекс выбранного файла/папки
     char *edit_file;            // Имя файла, открытого в редакторе
     EditorState *editor_state;  // Состояние редактора
     AnalysisResult *analysis_result; // Результаты анализа
+    char *search_query;         // Поисковый запрос
+    std::vector<FileInfo> filtered_files; // Отфильтрованные файлы
 } AppState;
 
 // Функции менеджера состояния
@@ -66,5 +67,7 @@ void state_set_current_dir(AppState *state, const char *path);
 void state_load_files(AppState *state);
 void state_select_index(AppState *state, unsigned int index);
 void state_set_edit_file(AppState *state, const char *filename);
+void state_filter_files(AppState *state, const char *query);
+void state_collect_files_recursive(const char *base_path, const char *relative_path, const char *query, std::vector<FileInfo> &files);
 
 #endif

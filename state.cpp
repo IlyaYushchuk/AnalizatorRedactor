@@ -3,6 +3,8 @@
 #include "editor.h"
 #include "analysis.h"
 #include <unistd.h>
+#include <strings.h> // Для strcasestr
+#include <algorithm>
 
 void state_init(AppState *state) {
     if (!state) {
@@ -11,12 +13,11 @@ void state_init(AppState *state) {
     }
     state->mode = MODE_BROWSE;
     state->current_dir = getcwd(NULL, 0);
-    state->files = NULL;
-    state->file_count = 0;
     state->selected_index = 0;
     state->edit_file = NULL;
     state->editor_state = NULL;
     state->analysis_result = NULL;
+    state->search_query = NULL;
     state_load_files(state);
 }
 
@@ -35,10 +36,20 @@ void state_free(AppState *state) {
         analysis_free(state->analysis_result);
         delete state->analysis_result;
     }
-    for (long long i = 0; i < state->file_count; i++) {
-        if (state->files[i].name) free(state->files[i].name);
+    for (auto &file : state->files) {
+        if (file.name) free(file.name);
     }
-    if (state->files) free(state->files);
+    state->files.clear();
+    for (auto &file : state->filtered_files) {
+        if (file.name) free(file.name);
+    }
+    state->filtered_files.clear();
+    if (state->search_query) free(state->search_query);
+    state->current_dir = NULL;
+    state->edit_file = NULL;
+    state->editor_state = NULL;
+    state->analysis_result = NULL;
+    state->search_query = NULL;
 }
 
 void state_set_current_dir(AppState *state, const char *path) {
@@ -61,14 +72,21 @@ void state_load_files(AppState *state) {
         fprintf(stderr, "Error: state_load_files called with NULL state\n");
         return;
     }
-    for (long long i = 0; i < state->file_count; i++) {
-        if (state->files[i].name) free(state->files[i].name);
+    // Очищаем существующие файлы
+    for (auto &file : state->files) {
+        if (file.name) free(file.name);
     }
-    if (state->files) free(state->files);
-    state->files = NULL;
-    state->file_count = 0;
+    state->files.clear();
+    for (auto &file : state->filtered_files) {
+        if (file.name) free(file.name);
+    }
+    state->filtered_files.clear();
+    if (state->search_query) {
+        free(state->search_query);
+        state->search_query = NULL;
+    }
 
-    fs_get_files(state->current_dir, &state->files, &state->file_count);
+    fs_get_files(state->current_dir, state->files);
 }
 
 void state_select_index(AppState *state, unsigned int index) {
@@ -76,9 +94,9 @@ void state_select_index(AppState *state, unsigned int index) {
         fprintf(stderr, "Error: state_select_index called with NULL state\n");
         return;
     }
-    if (index < state->file_count) {
-        state->selected_index = index;
-    }
+    long long max_index = state->filtered_files.size() > 0 ? state->filtered_files.size() - 1 : state->files.size() - 1;
+    state->selected_index = index <= static_cast<unsigned int>(max_index) ? index : max_index;
+    if (state->selected_index < 0) state->selected_index = 0;
 }
 
 void state_set_edit_file(AppState *state, const char *filename) {
@@ -103,4 +121,40 @@ void state_set_edit_file(AppState *state, const char *filename) {
         state->editor_state = NULL;
     }
     printf("Set edit file: %s\n", filename ? filename : "NULL");
+}
+
+void state_filter_files(AppState *state, const char *query) {
+    if (!state) {
+        fprintf(stderr, "Error: state_filter_files called with NULL state\n");
+        return;
+    }
+
+    // Очищаем предыдущие отфильтрованные файлы
+    for (auto &file : state->filtered_files) {
+        if (file.name) free(file.name);
+    }
+    state->filtered_files.clear();
+
+    if (state->search_query) {
+        free(state->search_query);
+        state->search_query = NULL;
+    }
+
+    if (!query || strlen(query) == 0) {
+        state->selected_index = state->files.size() > 0 ? std::min(state->selected_index, static_cast<long long>(state->files.size() - 1)) : 0;
+        return;
+    }
+
+    // Копируем запрос
+    state->search_query = strdup(query);
+    if (!state->search_query) {
+        fprintf(stderr, "Failed to allocate memory for search query\n");
+        return;
+    }
+
+    // Выполняем рекурсивный поиск
+    fs_search_recursive(state->current_dir, query, state->filtered_files);
+
+    // Корректируем индекс выбранного элемента
+    state->selected_index = state->filtered_files.size() > 0 ? 0 : 0;
 }
