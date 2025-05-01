@@ -22,6 +22,14 @@ typedef struct {
     time_t mtime;       // Время последнего изменения
 } FileInfo;
 
+typedef enum {
+    SORT_BY_NAME_ASC,   // По имени (по возрастанию)
+    SORT_BY_NAME_DESC,  // По имени (по убыванию)
+    SORT_BY_SIZE_ASC,   // По размеру (по возрастанию)
+    SORT_BY_SIZE_DESC,  // По размеру (по убыванию)
+    SORT_BY_DATE_ASC,   // По дате (по возрастанию)
+    SORT_BY_DATE_DESC   // По дате (по убыванию)
+} SortType;
 
 // Структура состояния редактора
 typedef struct {
@@ -63,6 +71,7 @@ typedef struct {
     std::vector<FileInfo> filtered_files; // Отфильтрованные файлы
     char *clipboard_path;       // Путь к файлу/папке в буфере обмена
     bool clipboard_is_cut;      // Флаг: true для вырезания, false для копирования
+    SortType sort_type;
 } AppState;
 
 // Функции менеджера состояния
@@ -74,5 +83,6 @@ void state_select_index(AppState *state, unsigned int index);
 void state_set_edit_file(AppState *state, const char *filename);
 void state_filter_files(AppState *state, const char *query);
 void state_collect_files_recursive(const char *base_path, const char *relative_path, const char *query, std::vector<FileInfo> &files);
+void state_sort_files(AppState *state);
 
 #endif

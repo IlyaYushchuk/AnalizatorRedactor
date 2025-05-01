@@ -240,100 +240,62 @@ void fs_cut(AppState *state, const char *src_path) {
     printf("Cut to clipboard: %s\n", full_path);
 }
 
-// Вставка файла/папки из буфера
-void fs_paste(AppState *state, const char *dest_dir) {
-    if (!state || !dest_dir || !state->clipboard_path) {
-        fprintf(stderr, "Error: fs_paste called with NULL state, dest_dir, or clipboard_path\n");
-        return;
+// Рекурсивное копирование директории
+static int copy_directory(const char *src_path, const char *dest_path) {
+    if (mkdir(dest_path, 0755) == -1 && errno != EEXIST) {
+        fprintf(stderr, "Failed to create directory: %s (%s)\n", dest_path, strerror(errno));
+        return -1;
     }
 
-    char dest_path[PATH_MAX];
-    // Извлекаем имя файла/папки из пути в буфере
-    const char *filename = strrchr(state->clipboard_path, '/');
-    if (!filename) {
-        filename = state->clipboard_path;
-    } else {
-        filename++; // Пропускаем символ '/'
-    }
-    snprintf(dest_path, sizeof(dest_path), "%s/%s", dest_dir, filename);
-
-    struct stat st;
-    if (stat(state->clipboard_path, &st) == -1) {
-        fprintf(stderr, "Failed to stat source path: %s\n", state->clipboard_path);
-        return;
+    DIR *dir = opendir(src_path);
+    if (!dir) {
+        fprintf(stderr, "Failed to open source directory: %s\n", src_path);
+        return -1;
     }
 
-    if (S_ISDIR(st.st_mode)) {
-        // Копирование директории (рекурсивное копирование)
-        fprintf(stderr, "Directory copying is not implemented yet\n");
-        return;
-    } else {
-        // Копирование файла
-        FILE *src = fopen(state->clipboard_path, "rb");
-        if (!src) {
-            fprintf(stderr, "Failed to open source file: %s\n", state->clipboard_path);
-            return;
-        }
-        FILE *dst = fopen(dest_path, "wb");
-        if (!dst) {
-            fclose(src);
-            fprintf(stderr, "Failed to open destination file: %s\n", dest_path);
-            return;
-        }
+    struct dirent *entry;
+    char src_full_path[PATH_MAX];
+    char dest_full_path[PATH_MAX];
 
-        char buffer[4096];
-        size_t bytes;
-        while ((bytes = fread(buffer, 1, sizeof(buffer), src)) > 0) {
-            fwrite(buffer, 1, bytes, dst);
-        }
-        fclose(src);
-        fclose(dst);
-        printf("Pasted file to: %s\n", dest_path);
+    while ((entry = readdir(dir))) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
 
-        // Если это операция вырезания, удаляем исходный файл
-        if (state->clipboard_is_cut) {
-            if (unlink(state->clipboard_path) == -1) {
-                fprintf(stderr, "Failed to delete source file after cut: %s\n", state->clipboard_path);
-            } else {
-                printf("Deleted source file after cut: %s\n", state->clipboard_path);
+        snprintf(src_full_path, sizeof(src_full_path), "%s/%s", src_path, entry->d_name);
+        snprintf(dest_full_path, sizeof(dest_full_path), "%s/%s", dest_path, entry->d_name);
+
+        struct stat st;
+        if (stat(src_full_path, &st) == -1) continue;
+
+        if (S_ISDIR(st.st_mode)) {
+            if (copy_directory(src_full_path, dest_full_path) == -1) {
+                closedir(dir);
+                return -1;
             }
+        } else {
+            FILE *src = fopen(src_full_path, "rb");
+            if (!src) {
+                fprintf(stderr, "Failed to open source file: %s\n", src_full_path);
+                continue;
+            }
+            FILE *dst = fopen(dest_full_path, "wb");
+            if (!dst) {
+                fclose(src);
+                fprintf(stderr, "Failed to open destination file: %s\n", dest_full_path);
+                continue;
+            }
+
+            char buffer[4096];
+            size_t bytes;
+            while ((bytes = fread(buffer, 1, sizeof(buffer), src)) > 0) {
+                fwrite(buffer, 1, bytes, dst);
+            }
+            fclose(src);
+            fclose(dst);
         }
     }
-
-    // Очищаем буфер обмена
-    free(state->clipboard_path);
-    state->clipboard_path = NULL;
-    state->clipboard_is_cut = false;
-    state_load_files(state); // Обновляем список файлов
+    closedir(dir);
+    return 0;
 }
-
-// Удаление файла с подтверждением
-void fs_delete_file(AppState *state, const char *filename) {
-    if (!state || !filename) {
-        fprintf(stderr, "Error: fs_delete_file called with NULL state or filename\n");
-        return;
-    }
-    char full_path[PATH_MAX];
-    snprintf(full_path, sizeof(full_path), "%s/%s", state->current_dir, filename);
-
-    // Запрашиваем подтверждение
-    clear();
-    mvprintw(0, 0, "Delete file %s? (y/n)", filename);
-    refresh();
-    int confirm = getch();
-    if (confirm != 'y' && confirm != 'Y') {
-        printf("File deletion canceled: %s\n", full_path);
-        return;
-    }
-
-    if (unlink(full_path) == -1) {
-        fprintf(stderr, "Failed to delete file: %s (%s)\n", full_path, strerror(errno));
-        return;
-    }
-    printf("Deleted file: %s\n", full_path);
-    state_load_files(state); // Обновляем список файлов
-}
-
 // Рекурсивное удаление директории
 static int remove_directory(const char *path) {
     DIR *dir = opendir(path);
@@ -373,6 +335,108 @@ static int remove_directory(const char *path) {
     }
     return ret;
 }
+
+// Вставка файла/папки из буфера
+void fs_paste(AppState *state, const char *dest_dir) {
+    if (!state || !dest_dir || !state->clipboard_path) {
+        fprintf(stderr, "Error: fs_paste called with NULL state, dest_dir, or clipboard_path\n");
+        return;
+    }
+
+    char dest_path[PATH_MAX];
+    const char *filename = strrchr(state->clipboard_path, '/');
+    if (!filename) {
+        filename = state->clipboard_path;
+    } else {
+        filename++;
+    }
+    snprintf(dest_path, sizeof(dest_path), "%s/%s", dest_dir, filename);
+
+    struct stat st;
+    if (stat(state->clipboard_path, &st) == -1) {
+        fprintf(stderr, "Failed to stat source path: %s\n", state->clipboard_path);
+        return;
+    }
+
+    if (S_ISDIR(st.st_mode)) {
+        // Копирование директории
+        if (copy_directory(state->clipboard_path, dest_path) == -1) {
+            fprintf(stderr, "Failed to copy directory: %s to %s\n", state->clipboard_path, dest_path);
+            return;
+        }
+        printf("Pasted directory to: %s\n", dest_path);
+    } else {
+        // Копирование файла (как было раньше)
+        FILE *src = fopen(state->clipboard_path, "rb");
+        if (!src) {
+            fprintf(stderr, "Failed to open source file: %s\n", state->clipboard_path);
+            return;
+        }
+        FILE *dst = fopen(dest_path, "wb");
+        if (!dst) {
+            fclose(src);
+            fprintf(stderr, "Failed to open destination file: %s\n", dest_path);
+            return;
+        }
+
+        char buffer[4096];
+        size_t bytes;
+        while ((bytes = fread(buffer, 1, sizeof(buffer), src)) > 0) {
+            fwrite(buffer, 1, bytes, dst);
+        }
+        fclose(src);
+        fclose(dst);
+        printf("Pasted file to: %s\n", dest_path);
+    }
+
+    if (state->clipboard_is_cut) {
+        if (S_ISDIR(st.st_mode)) {
+            if (remove_directory(state->clipboard_path) == -1) {
+                fprintf(stderr, "Failed to delete source directory after cut: %s\n", state->clipboard_path);
+            } else {
+                printf("Deleted source directory after cut: %s\n", state->clipboard_path);
+            }
+        } else {
+            if (unlink(state->clipboard_path) == -1) {
+                fprintf(stderr, "Failed to delete source file after cut: %s\n", state->clipboard_path);
+            } else {
+                printf("Deleted source file after cut: %s\n", state->clipboard_path);
+            }
+        }
+    }
+
+    free(state->clipboard_path);
+    state->clipboard_path = NULL;
+    state->clipboard_is_cut = false;
+    state_load_files(state);
+}
+// Удаление файла с подтверждением
+void fs_delete_file(AppState *state, const char *filename) {
+    if (!state || !filename) {
+        fprintf(stderr, "Error: fs_delete_file called with NULL state or filename\n");
+        return;
+    }
+    char full_path[PATH_MAX];
+    snprintf(full_path, sizeof(full_path), "%s/%s", state->current_dir, filename);
+
+    // Запрашиваем подтверждение
+    clear();
+    mvprintw(0, 0, "Delete file %s? (y/n)", filename);
+    refresh();
+    int confirm = getch();
+    if (confirm != 'y' && confirm != 'Y') {
+        printf("File deletion canceled: %s\n", full_path);
+        return;
+    }
+
+    if (unlink(full_path) == -1) {
+        fprintf(stderr, "Failed to delete file: %s (%s)\n", full_path, strerror(errno));
+        return;
+    }
+    printf("Deleted file: %s\n", full_path);
+    state_load_files(state); // Обновляем список файлов
+}
+
 
 // Удаление директории с подтверждением
 void fs_delete_dir(AppState *state, const char *dirname) {

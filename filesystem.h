@@ -18,5 +18,6 @@ void fs_paste(AppState *state, const char *dest_dir);
 void fs_cut(AppState *state, const char *src_path);
 void fs_delete_file(AppState *state, const char *filename);
 void fs_delete_dir(AppState *state, const char *dirname);
+void fs_copy(AppState *state, const char *src_path);
 
 #endif

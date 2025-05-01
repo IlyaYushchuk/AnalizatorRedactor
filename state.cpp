@@ -20,7 +20,46 @@ void state_init(AppState *state) {
     state->search_query = NULL;
     state->clipboard_path = NULL;
     state->clipboard_is_cut = false;
+    state->sort_type = SORT_BY_NAME_ASC;
     state_load_files(state);
+}
+
+void state_sort_files(AppState *state) {
+    if (!state) return;
+
+    auto &files = state->filtered_files.size() > 0 ? state->filtered_files : state->files;
+    switch (state->sort_type) {
+        case SORT_BY_NAME_ASC:
+            std::sort(files.begin(), files.end(), [](const FileInfo &a, const FileInfo &b) {
+                return strcmp(a.name, b.name) < 0;
+            });
+            break;
+        case SORT_BY_NAME_DESC:
+            std::sort(files.begin(), files.end(), [](const FileInfo &a, const FileInfo &b) {
+                return strcmp(a.name, b.name) > 0;
+            });
+            break;
+        case SORT_BY_SIZE_ASC:
+            std::sort(files.begin(), files.end(), [](const FileInfo &a, const FileInfo &b) {
+                return a.size < b.size;
+            });
+            break;
+        case SORT_BY_SIZE_DESC:
+            std::sort(files.begin(), files.end(), [](const FileInfo &a, const FileInfo &b) {
+                return a.size > b.size;
+            });
+            break;
+        case SORT_BY_DATE_ASC:
+            std::sort(files.begin(), files.end(), [](const FileInfo &a, const FileInfo &b) {
+                return a.mtime < b.mtime;
+            });
+            break;
+        case SORT_BY_DATE_DESC:
+            std::sort(files.begin(), files.end(), [](const FileInfo &a, const FileInfo &b) {
+                return a.mtime > b.mtime;
+            });
+            break;
+    }
 }
 
 void state_free(AppState *state) {
@@ -77,7 +116,6 @@ void state_load_files(AppState *state) {
         fprintf(stderr, "Error: state_load_files called with NULL state\n");
         return;
     }
-    // Очищаем существующие файлы
     for (auto &file : state->files) {
         if (file.name) free(file.name);
     }
@@ -92,6 +130,35 @@ void state_load_files(AppState *state) {
     }
 
     fs_get_files(state->current_dir, state->files);
+    state_sort_files(state); // Добавляем сортировку
+}
+
+void state_filter_files(AppState *state, const char *query) {
+    if (!state) {
+        fprintf(stderr, "Error: state_filter_files called with NULL state\n");
+        return;
+    }
+    for (auto &file : state->filtered_files) {
+        if (file.name) free(file.name);
+    }
+    state->filtered_files.clear();
+    if (state->search_query) {
+        free(state->search_query);
+        state->search_query = NULL;
+    }
+    if (!query || strlen(query) == 0) {
+        state->selected_index = state->files.size() > 0 ? std::min(state->selected_index, static_cast<long long>(state->files.size() - 1)) : 0;
+        return;
+    }
+    state->search_query = strdup(query);
+    if (!state->search_query) {
+        fprintf(stderr, "Failed to allocate memory for search query\n");
+        return;
+    }
+    printf("Starting search from directory: %s\n", state->current_dir);
+    fs_search_recursive(state->current_dir, query, state->filtered_files);
+    state_sort_files(state); // Добавляем сортировку
+    state->selected_index = state->filtered_files.size() > 0 ? 0 : 0;
 }
 
 void state_select_index(AppState *state, unsigned int index) {
@@ -126,40 +193,4 @@ void state_set_edit_file(AppState *state, const char *filename) {
         state->editor_state = NULL;
     }
     printf("Set edit file: %s\n", filename ? filename : "NULL");
-}
-
-void state_filter_files(AppState *state, const char *query) {
-    if (!state) {
-        fprintf(stderr, "Error: state_filter_files called with NULL state\n");
-        return;
-    }
-
-    // Очищаем предыдущие отфильтрованные файлы
-    for (auto &file : state->filtered_files) {
-        if (file.name) free(file.name);
-    }
-    state->filtered_files.clear();
-
-    if (state->search_query) {
-        free(state->search_query);
-        state->search_query = NULL;
-    }
-
-    if (!query || strlen(query) == 0) {
-        state->selected_index = state->files.size() > 0 ? std::min(state->selected_index, static_cast<long long>(state->files.size() - 1)) : 0;
-        return;
-    }
-
-    // Копируем запрос
-    state->search_query = strdup(query);
-    if (!state->search_query) {
-        fprintf(stderr, "Failed to allocate memory for search query\n");
-        return;
-    }
-
-    // Выполняем поиск в текущей директории
-    fs_search_recursive(state->current_dir, query, state->filtered_files);
-
-    // Корректируем индекс выбранного элемента
-    state->selected_index = state->filtered_files.size() > 0 ? 0 : 0;
 }

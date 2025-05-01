@@ -211,6 +211,30 @@ int browse_handle_input(AppState *state) {
         case 27: // Esc
             state_filter_files(state, NULL);
             break;
+        case 's': // Сортировка по имени (по возрастанию)
+            state->sort_type = SORT_BY_NAME_ASC;
+            state_sort_files(state);
+            break;
+        case 'S': // Сортировка по имени (по убыванию)
+            state->sort_type = SORT_BY_NAME_DESC;
+            state_sort_files(state);
+            break;
+        case 'z': // Сортировка по размеру (по возрастанию)
+            state->sort_type = SORT_BY_SIZE_ASC;
+            state_sort_files(state);
+            break;
+        case 'Z': // Сортировка по размеру (по убыванию)
+            state->sort_type = SORT_BY_SIZE_DESC;
+            state_sort_files(state);
+            break;
+        case 'd': // Сортировка по дате (по возрастанию)
+            state->sort_type = SORT_BY_DATE_ASC;
+            state_sort_files(state);
+            break;
+        case 'D': // Сортировка по дате (по убыванию)
+            state->sort_type = SORT_BY_DATE_DESC;
+            state_sort_files(state);
+            break;
     }
     if(quit)
         return 0;

@@ -3,6 +3,7 @@
 #include "editor.h"
 #include "analysis.h"
 #include "handlers.h"
+#include <sys/stat.h>
 #include <locale.h>
 #include <string.h>
 #include <time.h>
@@ -67,14 +68,16 @@ void ui_init() {
     setlocale(LC_ALL, "");
     initscr();
     start_color();
-    raw(); 
+    raw();
     noecho();
     keypad(stdscr, TRUE);
     mousemask(ALL_MOUSE_EVENTS | REPORT_MOUSE_POSITION, NULL);
 
-    init_pair(1, COLOR_GREEN, COLOR_BLACK);
-    init_pair(2, COLOR_YELLOW, COLOR_BLACK);
-    init_pair(3, COLOR_WHITE, COLOR_BLACK);
+    init_pair(1, COLOR_GREEN, COLOR_BLACK);  // Выделенный элемент
+    init_pair(2, COLOR_YELLOW, COLOR_BLACK); // Директории
+    init_pair(3, COLOR_WHITE, COLOR_BLACK);   // Обычные файлы
+    init_pair(4, COLOR_CYAN, COLOR_BLACK);   // Исполняемые файлы
+    init_pair(5, COLOR_RED, COLOR_BLACK);    // Архивы (.zip, .tar, etc.)
 }
 
 void ui_deinit() {
@@ -113,49 +116,53 @@ static void browse_draw(AppState *state) {
         const FileInfo &file = display_files[i];
         bool is_selected = (static_cast<long long>(i) == state->selected_index);
 
-        // Форматируем дату
         char time_str[20];
         strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M", localtime(&file.mtime));
 
-        // Форматируем размер
         char size_str[20];
         snprintf(size_str, sizeof(size_str), "%lld", file.size);
 
-        // Преобразуем строки в широкие символы с учетом ширины столбцов
-        wchar_t display_name[100];
+        wchar_t display_name_w[100];
         wchar_t display_size[20];
         wchar_t display_date[30];
 
-        truncate_to_width(file.name ? file.name : "(null)", display_name, name_width, 100);
+        const char *display_name = file.name ? file.name : "(null)";
+        if (state->filtered_files.size() > 0) {
+            const char *last_slash = strrchr(display_name, '/');
+            if (last_slash) display_name = last_slash + 1;
+        }
+        truncate_to_width(display_name, display_name_w, name_width, 100);
         truncate_to_width(size_str, display_size, size_width, 20);
         truncate_to_width(time_str, display_date, date_width, 30);
 
-        // Выбор цвета
+        // Определяем тип файла для подсветки
+        int color_pair = 3; // Обычный файл по умолчанию
         if (is_selected) {
-            attron(COLOR_PAIR(1));
+            color_pair = 1; // Выделенный элемент
         } else if (file.is_dir) {
-            attron(COLOR_PAIR(2));
+            color_pair = 2; // Директория
         } else {
-            attron(COLOR_PAIR(3));
+            const char *ext = strrchr(file.name, '.');
+            if (ext) {
+                if (strcmp(ext, ".zip") == 0 || strcmp(ext, ".tar") == 0 || strcmp(ext, ".gz") == 0) {
+                    color_pair = 5; // Архивы
+                }
+            }
+            struct stat st;
+            if (stat(file.name, &st) != -1 && (st.st_mode & S_IXUSR)) {
+                color_pair = 4; // Исполняемый файл
+            }
         }
 
-        // Вывод строки
+        attron(COLOR_PAIR(color_pair));
         move(start_y + i, 0);
-        addwstr(display_name);
+        addwstr(display_name_w);
         addwstr(display_size);
         addwstr(display_date);
-
-        // Сброс цвета
-        if (is_selected) {
-            attroff(COLOR_PAIR(1));
-        } else if (file.is_dir) {
-            attroff(COLOR_PAIR(2));
-        } else {
-            attroff(COLOR_PAIR(3));
-        }
+        attroff(COLOR_PAIR(color_pair));
     }
 
-    mvprintw(max_y - 1, 0, "q: Quit | Enter: Open | Arrows: Navigate | F3: Analyze | f: Search | F5: Create File | F6: Create Dir | F7: Rename | Ctrl+C: Copy | Ctrl+X: Cut | Ctrl+V: Paste | F8: Delete");
+    mvprintw(max_y - 1, 0, "q: Quit | Enter: Open | Arrows: Navigate | F3: Analyze | f: Search | F5: Create File | F6: Create Dir | F7: Rename | Ctrl+C: Copy | Ctrl+X: Cut | Ctrl+V: Paste | F8: Delete | s/S: Sort by Name | z/Z: Sort by Size | d/D: Sort by Date | h: Home | /: Root");
 }
 
 static void search_draw(AppState *state, const char *search_input) {
