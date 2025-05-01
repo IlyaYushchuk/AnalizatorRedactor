@@ -58,6 +58,8 @@ typedef struct {
     AnalysisResult *analysis_result; // Результаты анализа
     char *search_query;         // Поисковый запрос
     std::vector<FileInfo> filtered_files; // Отфильтрованные файлы
+    char *clipboard_path;       // Путь к файлу/папке в буфере обмена
+    bool clipboard_is_cut;      // Флаг: true для вырезания, false для копирования
 } AppState;
 
 // Функции менеджера состояния

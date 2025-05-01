@@ -79,7 +79,7 @@ void ui_draw(AppState *state) {
         }
 
         // Статусная строка
-        mvprintw(max_y - 1, 0, "q: Quit | Enter: Open | Arrows: Navigate | F3: Analyze | f: Search");
+        mvprintw(max_y - 1, 0, "q: Quit | Enter: Open | Arrows: Navigate | F3: Analyze | f: Search | F5: Create File | F6: Create Dir | F7: Rename | Ctrl+C: Copy | Ctrl+X: Cut | Ctrl+V: Paste");
     } else if (state->mode == MODE_EDITOR) {
         editor_draw(state);
     } else if (state->mode == MODE_ANALYSIS) {
@@ -152,7 +152,7 @@ int ui_handle_input(AppState *state) {
                 search_active = true;
                 state_filter_files(state, search_input);
                 break;
-            case KEY_F(3):
+            case KEY_F(3): // Анализ
             {
                 clear();
                 mvprintw(0, 0, "Enter number of days for old files (default 180): ");
@@ -180,6 +180,74 @@ int ui_handle_input(AppState *state) {
                 time_t now = time(NULL);
                 time_t old_threshold = now - days * 24 * 3600;
                 analysis_perform(state, old_threshold);
+            }
+                break;
+            case KEY_F(5): // Создание файла
+            {
+                clear();
+                mvprintw(0, 0, "Enter new file name: ");
+                refresh();
+                echo();
+                char filename[256] = "";
+                getnstr(filename, sizeof(filename) - 1);
+                noecho();
+                if (strlen(filename) > 0) {
+                    fs_create_file(state, filename);
+                }
+            }
+                break;
+            case KEY_F(6): // Создание папки
+            {
+                clear();
+                mvprintw(0, 0, "Enter new directory name: ");
+                refresh();
+                echo();
+                char dirname[256] = "";
+                getnstr(dirname, sizeof(dirname) - 1);
+                noecho();
+                if (strlen(dirname) > 0) {
+                    fs_create_dir(state, dirname);
+                }
+            }
+                break;
+            case KEY_F(7): // Переименование
+            {
+                const std::vector<FileInfo> &display_files = state->filtered_files.size() > 0 ? state->filtered_files : state->files;
+                if (state->selected_index < static_cast<long long>(display_files.size())) {
+                    clear();
+                    mvprintw(0, 0, "Enter new name for %s: ", display_files[state->selected_index].name);
+                    refresh();
+                    echo();
+                    char new_name[256] = "";
+                    getnstr(new_name, sizeof(new_name) - 1);
+                    noecho();
+                    if (strlen(new_name) > 0) {
+                        fs_rename(state, display_files[state->selected_index].name, new_name);
+                    }
+                }
+            }
+                break;
+            case 3: // Ctrl+C (копирование)
+            {
+                const std::vector<FileInfo> &display_files = state->filtered_files.size() > 0 ? state->filtered_files : state->files;
+                if (state->selected_index < static_cast<long long>(display_files.size())) {
+                    fs_copy(state, display_files[state->selected_index].name);
+                }
+            }
+                break;
+            case 24: // Ctrl+X (вырезание)
+            {
+                const std::vector<FileInfo> &display_files = state->filtered_files.size() > 0 ? state->filtered_files : state->files;
+                if (state->selected_index < static_cast<long long>(display_files.size())) {
+                    fs_cut(state, display_files[state->selected_index].name);
+                }
+            }
+                break;
+            case 22: // Ctrl+V (вставка)
+            {
+                if (state->clipboard_path) {
+                    fs_paste(state, state->current_dir);
+                }
             }
                 break;
             case KEY_MOUSE:

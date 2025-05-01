@@ -18,6 +18,8 @@ void state_init(AppState *state) {
     state->editor_state = NULL;
     state->analysis_result = NULL;
     state->search_query = NULL;
+    state->clipboard_path = NULL;
+    state->clipboard_is_cut = false;
     state_load_files(state);
 }
 
@@ -50,6 +52,9 @@ void state_free(AppState *state) {
     state->editor_state = NULL;
     state->analysis_result = NULL;
     state->search_query = NULL;
+    if (state->clipboard_path) free(state->clipboard_path);
+    state->clipboard_path = NULL;
+    state->clipboard_is_cut = false;
 }
 
 void state_set_current_dir(AppState *state, const char *path) {

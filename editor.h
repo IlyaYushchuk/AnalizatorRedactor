@@ -1,7 +1,7 @@
 #ifndef EDITOR_H
 #define EDITOR_H
 
-#include "state.h" // Включаем state.h для AppState
+#include "state.h" 
 #include <ncursesw/ncurses.h>
 
 

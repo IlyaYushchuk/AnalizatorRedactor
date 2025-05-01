@@ -4,6 +4,9 @@
 #include <stdio.h>
 #include <string.h>
 #include <vector>
+#include <fcntl.h>
+#include <unistd.h>
+#include <errno.h>
 
 void add_parent_dir_entry(std::vector<FileInfo> &files, const char *path) {
     // Проверяем, не корневая ли директория
@@ -140,4 +143,166 @@ void fs_open_file(AppState *state, const char *file_name) {
     printf("Opening file: %s\n", full_path);
     state_set_edit_file(state, full_path);
     state->mode = MODE_EDITOR;
+}
+
+// Создание нового файла
+void fs_create_file(AppState *state, const char *filename) {
+    if (!state || !filename) {
+        fprintf(stderr, "Error: fs_create_file called with NULL state or filename\n");
+        return;
+    }
+    char full_path[PATH_MAX];
+    snprintf(full_path, sizeof(full_path), "%s/%s", state->current_dir, filename);
+    
+    int fd = open(full_path, O_CREAT | O_WRONLY, 0644);
+    if (fd == -1) {
+        fprintf(stderr, "Failed to create file: %s (%s)\n", full_path, strerror(errno));
+        return;
+    }
+    close(fd);
+    printf("Created file: %s\n", full_path);
+    state_load_files(state); // Обновляем список файлов
+}
+
+// Создание новой папки
+void fs_create_dir(AppState *state, const char *dirname) {
+    if (!state || !dirname) {
+        fprintf(stderr, "Error: fs_create_dir called with NULL state or dirname\n");
+        return;
+    }
+    char full_path[PATH_MAX];
+    snprintf(full_path, sizeof(full_path), "%s/%s", state->current_dir, dirname);
+    
+    if (mkdir(full_path, 0755) == -1) {
+        fprintf(stderr, "Failed to create directory: %s (%s)\n", full_path, strerror(errno));
+        return;
+    }
+    printf("Created directory: %s\n", full_path);
+    state_load_files(state); // Обновляем список файлов
+}
+
+// Переименование файла или папки
+void fs_rename(AppState *state, const char *old_name, const char *new_name) {
+    if (!state || !old_name || !new_name) {
+        fprintf(stderr, "Error: fs_rename called with NULL state, old_name or new_name\n");
+        return;
+    }
+    char old_path[PATH_MAX];
+    char new_path[PATH_MAX];
+    snprintf(old_path, sizeof(old_path), "%s/%s", state->current_dir, old_name);
+    snprintf(new_path, sizeof(new_path), "%s/%s", state->current_dir, new_name);
+    
+    if (rename(old_path, new_path) == -1) {
+        fprintf(stderr, "Failed to rename %s to %s (%s)\n", old_path, new_path, strerror(errno));
+        return;
+    }
+    printf("Renamed %s to %s\n", old_path, new_path);
+    state_load_files(state); // Обновляем список файлов
+}
+
+// Копирование файла/папки в буфер
+void fs_copy(AppState *state, const char *src_path) {
+    if (!state || !src_path) {
+        fprintf(stderr, "Error: fs_copy called with NULL state or src_path\n");
+        return;
+    }
+    char full_path[PATH_MAX];
+    snprintf(full_path, sizeof(full_path), "%s/%s", state->current_dir, src_path);
+    if (state->clipboard_path) {
+        free(state->clipboard_path);
+    }
+    state->clipboard_path = strdup(full_path);
+    if (!state->clipboard_path) {
+        fprintf(stderr, "Failed to allocate memory for clipboard path\n");
+        return;
+    }
+    state->clipboard_is_cut = false;
+    printf("Copied to clipboard: %s\n", full_path);
+}
+
+// Вырезание файла/папки в буфер
+void fs_cut(AppState *state, const char *src_path) {
+    if (!state || !src_path) {
+        fprintf(stderr, "Error: fs_cut called with NULL state or src_path\n");
+        return;
+    }
+    char full_path[PATH_MAX];
+    snprintf(full_path, sizeof(full_path), "%s/%s", state->current_dir, src_path);
+    if (state->clipboard_path) {
+        free(state->clipboard_path);
+    }
+    state->clipboard_path = strdup(full_path);
+    if (!state->clipboard_path) {
+        fprintf(stderr, "Failed to allocate memory for clipboard path\n");
+        return;
+    }
+    state->clipboard_is_cut = true;
+    printf("Cut to clipboard: %s\n", full_path);
+}
+
+// Вставка файла/папки из буфера
+void fs_paste(AppState *state, const char *dest_dir) {
+    if (!state || !dest_dir || !state->clipboard_path) {
+        fprintf(stderr, "Error: fs_paste called with NULL state, dest_dir, or clipboard_path\n");
+        return;
+    }
+
+    char dest_path[PATH_MAX];
+    // Извлекаем имя файла/папки из пути в буфере
+    const char *filename = strrchr(state->clipboard_path, '/');
+    if (!filename) {
+        filename = state->clipboard_path;
+    } else {
+        filename++; // Пропускаем символ '/'
+    }
+    snprintf(dest_path, sizeof(dest_path), "%s/%s", dest_dir, filename);
+
+    struct stat st;
+    if (stat(state->clipboard_path, &st) == -1) {
+        fprintf(stderr, "Failed to stat source path: %s\n", state->clipboard_path);
+        return;
+    }
+
+    if (S_ISDIR(st.st_mode)) {
+        // Копирование директории (рекурсивное копирование)
+        fprintf(stderr, "Directory copying is not implemented yet\n");
+        return;
+    } else {
+        // Копирование файла
+        FILE *src = fopen(state->clipboard_path, "rb");
+        if (!src) {
+            fprintf(stderr, "Failed to open source file: %s\n", state->clipboard_path);
+            return;
+        }
+        FILE *dst = fopen(dest_path, "wb");
+        if (!dst) {
+            fclose(src);
+            fprintf(stderr, "Failed to open destination file: %s\n", dest_path);
+            return;
+        }
+
+        char buffer[4096];
+        size_t bytes;
+        while ((bytes = fread(buffer, 1, sizeof(buffer), src)) > 0) {
+            fwrite(buffer, 1, bytes, dst);
+        }
+        fclose(src);
+        fclose(dst);
+        printf("Pasted file to: %s\n", dest_path);
+
+        // Если это операция вырезания, удаляем исходный файл
+        if (state->clipboard_is_cut) {
+            if (unlink(state->clipboard_path) == -1) {
+                fprintf(stderr, "Failed to delete source file after cut: %s\n", state->clipboard_path);
+            } else {
+                printf("Deleted source file after cut: %s\n", state->clipboard_path);
+            }
+        }
+    }
+
+    // Очищаем буфер обмена
+    free(state->clipboard_path);
+    state->clipboard_path = NULL;
+    state->clipboard_is_cut = false;
+    state_load_files(state); // Обновляем список файлов
 }
