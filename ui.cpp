@@ -7,6 +7,62 @@
 #include <string.h>
 #include <time.h>
 
+// Подсчитывает видимую ширину строки UTF-8
+static int get_display_width(const char *str) {
+    if (!str) return 0;
+    int width = 0;
+    wchar_t wch;
+    mbstate_t mbs;
+    memset(&mbs, 0, sizeof(mbs));
+
+    size_t len = strlen(str);
+    size_t i = 0;
+    while (i < len) {
+        size_t ret = mbrtowc(&wch, str + i, len - i, &mbs);
+        if (ret == (size_t)-1 || ret == (size_t)-2) break; // Ошибка
+        if (ret == 0) break; // Конец строки
+        width += wcwidth(wch);
+        i += ret;
+    }
+    return width;
+}
+
+// Преобразует строку UTF-8 в массив широких символов (wchar_t)
+static void utf8_to_wchar(const char *str, wchar_t *wstr, size_t max_len) {
+    mbstate_t mbs;
+    memset(&mbs, 0, sizeof(mbs));
+    mbsrtowcs(wstr, &str, max_len, &mbs);
+    wstr[max_len - 1] = L'\0'; // Гарантируем завершение строки
+}
+
+// Обрезает строку до заданной видимой ширины и преобразует в широкие символы
+static void truncate_to_width(const char *str, wchar_t *wstr, int target_width, size_t max_len) {
+    if (!str) {
+        wstr[0] = L'\0';
+        return;
+    }
+
+    wchar_t temp[max_len];
+    utf8_to_wchar(str, temp, max_len);
+
+    int width = 0;
+    size_t pos = 0;
+    for (size_t i = 0; temp[i] != L'\0' && i < max_len - 1; i++) {
+        int char_width = wcwidth(temp[i]);
+        if (width + char_width > target_width) break;
+        width += char_width;
+        wstr[pos++] = temp[i];
+    }
+    wstr[pos] = L'\0';
+
+    // Дополняем пробелами до target_width
+    while (width < target_width && pos < max_len - 1) {
+        wstr[pos++] = L' ';
+        width++;
+    }
+    wstr[pos] = L'\0';
+}
+
 void ui_init() {
     setlocale(LC_ALL, "");
     initscr();
@@ -32,15 +88,49 @@ static void browse_draw(AppState *state) {
     getmaxyx(stdscr, max_y, max_x);
     unsigned int start_y = 2;
 
+    // Определяем ширину столбцов
+    const int name_width = 50; // Ширина для имени файла/папки
+    const int size_width = 10; // Ширина для размера
+    const int date_width = 20; // Ширина для даты
+
+    // Рисуем заголовки столбцов
+    wchar_t name_header[100], size_header[100], date_header[100];
+    truncate_to_width("Имя файла/папки", name_header, name_width, 100);
+    truncate_to_width("Размер", size_header, size_width, 100);
+    truncate_to_width("Дата", date_header, date_width, 100);
+
+    attron(COLOR_PAIR(3));
+    move(start_y, 0);
+    addwstr(name_header);
+    addwstr(size_header);
+    addwstr(date_header);
+    attroff(COLOR_PAIR(3));
+    start_y++;
+
     const std::vector<FileInfo> &display_files = state->filtered_files.size() > 0 ? state->filtered_files : state->files;
 
     for (size_t i = 0; i < display_files.size() && start_y + i < max_y - 2; i++) {
         const FileInfo &file = display_files[i];
         bool is_selected = (static_cast<long long>(i) == state->selected_index);
 
+        // Форматируем дату
         char time_str[20];
         strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M", localtime(&file.mtime));
 
+        // Форматируем размер
+        char size_str[20];
+        snprintf(size_str, sizeof(size_str), "%lld", file.size);
+
+        // Преобразуем строки в широкие символы с учетом ширины столбцов
+        wchar_t display_name[100];
+        wchar_t display_size[20];
+        wchar_t display_date[30];
+
+        truncate_to_width(file.name ? file.name : "(null)", display_name, name_width, 100);
+        truncate_to_width(size_str, display_size, size_width, 20);
+        truncate_to_width(time_str, display_date, date_width, 30);
+
+        // Выбор цвета
         if (is_selected) {
             attron(COLOR_PAIR(1));
         } else if (file.is_dir) {
@@ -49,10 +139,13 @@ static void browse_draw(AppState *state) {
             attron(COLOR_PAIR(3));
         }
 
-        char display_name[100];
-        snprintf(display_name, sizeof(display_name), "%.90s", file.name ? file.name : "(null)");
-        mvprintw(start_y + i, 0, "%-50s %10lld %s", display_name, file.size, time_str);
+        // Вывод строки
+        move(start_y + i, 0);
+        addwstr(display_name);
+        addwstr(display_size);
+        addwstr(display_date);
 
+        // Сброс цвета
         if (is_selected) {
             attroff(COLOR_PAIR(1));
         } else if (file.is_dir) {
@@ -76,15 +169,49 @@ static void search_draw(AppState *state, const char *search_input) {
     getmaxyx(stdscr, max_y, max_x);
     unsigned int start_y = 3;
 
+    // Определяем ширину столбцов
+    const int name_width = 50; // Ширина для имени файла/папки
+    const int size_width = 10; // Ширина для размера
+    const int date_width = 20; // Ширина для даты
+
+    // Рисуем заголовки столбцов
+    wchar_t name_header[100], size_header[100], date_header[100];
+    truncate_to_width("Имя файла/папки", name_header, name_width, 100);
+    truncate_to_width("Размер", size_header, size_width, 100);
+    truncate_to_width("Дата", date_header, date_width, 100);
+
+    attron(COLOR_PAIR(3));
+    move(start_y, 0);
+    addwstr(name_header);
+    addwstr(size_header);
+    addwstr(date_header);
+    attroff(COLOR_PAIR(3));
+    start_y++;
+
     const std::vector<FileInfo> &display_files = state->filtered_files;
 
     for (size_t i = 0; i < display_files.size() && start_y + i < max_y - 2; i++) {
         const FileInfo &file = display_files[i];
         bool is_selected = (static_cast<long long>(i) == state->selected_index);
 
+        // Форматируем дату
         char time_str[20];
         strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M", localtime(&file.mtime));
 
+        // Форматируем размер
+        char size_str[20];
+        snprintf(size_str, sizeof(size_str), "%lld", file.size);
+
+        // Преобразуем строки в широкие символы с учетом ширины столбцов
+        wchar_t display_name[100];
+        wchar_t display_size[20];
+        wchar_t display_date[30];
+
+        truncate_to_width(file.name ? file.name : "(null)", display_name, name_width, 100);
+        truncate_to_width(size_str, display_size, size_width, 20);
+        truncate_to_width(time_str, display_date, date_width, 30);
+
+        // Выбор цвета
         if (is_selected) {
             attron(COLOR_PAIR(1));
         } else if (file.is_dir) {
@@ -93,10 +220,13 @@ static void search_draw(AppState *state, const char *search_input) {
             attron(COLOR_PAIR(3));
         }
 
-        char display_name[100];
-        snprintf(display_name, sizeof(display_name), "%.90s", file.name ? file.name : "(null)");
-        mvprintw(start_y + i, 0, "%-50s %10lld %s", display_name, file.size, time_str);
+        // Вывод строки
+        move(start_y + i, 0);
+        addwstr(display_name);
+        addwstr(display_size);
+        addwstr(display_date);
 
+        // Сброс цвета
         if (is_selected) {
             attroff(COLOR_PAIR(1));
         } else if (file.is_dir) {

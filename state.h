@@ -22,6 +22,7 @@ typedef struct {
     time_t mtime;       // Время последнего изменения
 } FileInfo;
 
+
 // Структура состояния редактора
 typedef struct {
     char **lines;       // Массив строк
@@ -30,6 +31,7 @@ typedef struct {
     unsigned int cursor_x;  // Позиция курсора по X
     unsigned int cursor_y;  // Позиция курсора по Y
     unsigned int scroll_y;  // Смещение прокрутки
+    bool is_modified;      // Флаг: были ли изменения
 } EditorState;
 
 // Структура для хранения информации о дубликатах

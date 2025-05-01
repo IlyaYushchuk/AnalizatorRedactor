@@ -15,7 +15,7 @@ void editor_init(EditorState *editor) {
     editor->cursor_x = 0;
     editor->cursor_y = 0;
     editor->scroll_y = 0;
-    // printf("Editor initialized\n");
+    editor->is_modified = false; 
 }
 
 void editor_free(EditorState *editor) {

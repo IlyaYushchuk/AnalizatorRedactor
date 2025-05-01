@@ -1,4 +1,5 @@
 #include "handlers.h"
+#include "ui.h"
 #include "filesystem.h"
 #include "editor.h"
 #include "analysis.h"
@@ -8,6 +9,7 @@
 #include <ctype.h>
 #include <algorithm>
 #include <unistd.h>
+#include <limits.h>
 
 int browse_handle_input(AppState *state) {
     if (!state) {
@@ -17,9 +19,10 @@ int browse_handle_input(AppState *state) {
 
     int ch = getch();
     MEVENT event;
-
+    bool quit = false;
     switch (ch) {
         case 'q':
+            quit = true;
             return 0;
         case KEY_UP:
             state_select_index(state, state->selected_index > 0 ? state->selected_index - 1 : 0);
@@ -34,15 +37,43 @@ int browse_handle_input(AppState *state) {
         {
             const std::vector<FileInfo> &display_files = state->filtered_files.size() > 0 ? state->filtered_files : state->files;
             if (state->selected_index < static_cast<long long>(display_files.size())) {
-                if (display_files[state->selected_index].is_dir) {
-                    fs_open_dir(state, display_files[state->selected_index].name);
+                const FileInfo &file = display_files[state->selected_index];
+                if (state->filtered_files.size() > 0 && !file.is_dir) {
+                    // Для результатов поиска у нас полный путь в file.name
+                    char *last_slash = strrchr(file.name, '/');
+                    if (last_slash) {
+                        char dir_path[PATH_MAX];
+                        strncpy(dir_path, file.name, last_slash - file.name);
+                        dir_path[last_slash - file.name] = '\0';
+
+                        // Сохраняем текущую директорию
+                        char original_dir[PATH_MAX];
+                        strncpy(original_dir, state->current_dir, PATH_MAX);
+                        original_dir[PATH_MAX - 1] = '\0';
+
+                        // Переходим в директорию файла
+                        state_set_current_dir(state, dir_path);
+
+                        // Открываем файл
+                        const char *filename = last_slash + 1;
+                        printf("Attempting to open file from search: %s (from dir: %s)\n", filename, dir_path);
+                        fs_open_file(state, filename);
+
+                        // Возвращаемся в исходную директорию
+                        state_set_current_dir(state, original_dir);
+                    } else {
+                        printf("Attempting to open file from search: %s\n", file.name);
+                        fs_open_file(state, file.name);
+                    }
+                } else if (file.is_dir) {
+                    fs_open_dir(state, file.name);
                 } else {
-                    printf("Attempting to open file: %s\n", display_files[state->selected_index].name);
-                    fs_open_file(state, display_files[state->selected_index].name);
+                    printf("Attempting to open file: %s\n", file.name);
+                    fs_open_file(state, file.name);
                 }
             }
         }
-            break;
+        break;
         case 'f': // Активация поиска
             state->mode = MODE_SEARCH;
             state_filter_files(state, "");
@@ -177,7 +208,12 @@ int browse_handle_input(AppState *state) {
                 }
             }
             break;
+        case 27: // Esc
+            state_filter_files(state, NULL);
+            break;
     }
+    if(quit)
+        return 0;
     return 1;
 }
 
@@ -203,10 +239,12 @@ int search_handle_input(AppState *state, char *search_input, bool *search_active
     } else if (ch == KEY_BACKSPACE && strlen(search_input) > 0) {
         search_input[strlen(search_input) - 1] = '\0';
         state_filter_files(state, search_input);
+        ui_draw(state);
     } else if (ch >= 32 && ch <= 126 && strlen(search_input) < 256 - 1) {
         search_input[strlen(search_input)] = static_cast<char>(ch);
         search_input[strlen(search_input)] = '\0';
         state_filter_files(state, search_input);
+        ui_draw(state);
     }
     return 1;
 }
@@ -230,6 +268,7 @@ int analysis_handle_input(AppState *state) {
             return 0;
         case 27: // Esc
             state->mode = MODE_BROWSE;
+            state_filter_files(state, NULL); // Добавляем сброс поиска
             break;
         case KEY_UP:
             if (result->selected_index > 0) {
@@ -390,18 +429,37 @@ int editor_handle_input(AppState *state) {
     getmaxyx(stdscr, max_y, max_x);
 
     switch (ch) {
-        case 'q':
+       case 'q': // выход
+            if (editor->is_modified) {
+                clear();
+                mvprintw(0, 0, "You have unsaved changes. Exit without saving? (y/n)");
+                refresh();
+                int confirm = getch();
+                if (confirm != 'y' && confirm != 'Y') {
+                    break;
+                }
+            }
             editor_free(editor);
             free(editor);
             state->editor_state = NULL;
             state_set_edit_file(state, NULL);
-            return 0; // Завершаем программу
-        case 27: // Esc
+            return 0;
+       case 27: // Esc
+            if (editor->is_modified) {
+                clear();
+                mvprintw(0, 0, "You have unsaved changes. Exit without saving? (y/n)");
+                refresh();
+                int confirm = getch();
+                if (confirm != 'y' && confirm != 'Y') {
+                    break; 
+                }
+            }
             editor_free(editor);
             free(editor);
             state->editor_state = NULL;
             state->mode = MODE_BROWSE;
             state_set_edit_file(state, NULL);
+            state_filter_files(state, NULL); 
             break;
         case KEY_F(2): // Сохранение
             if (state->edit_file) {
@@ -418,6 +476,7 @@ int editor_handle_input(AppState *state) {
                     }
                 }
                 fclose(file);
+                editor->is_modified = false;
             }
             break;
         case KEY_UP:
@@ -457,6 +516,7 @@ int editor_handle_input(AppState *state) {
                 size_t len = strlen(line);
                 memmove(line + editor->cursor_x - 1, line + editor->cursor_x, len - editor->cursor_x + 1);
                 editor->cursor_x--;
+                editor->is_modified = true; // Добавляем
             } else if (editor->cursor_y > 0) {
                 // Объединяем с предыдущей строкой
                 char *current_line = editor->lines[editor->cursor_y];
@@ -478,6 +538,7 @@ int editor_handle_input(AppState *state) {
                 if (editor->cursor_y < editor->scroll_y) {
                     editor->scroll_y--;
                 }
+                editor->is_modified = true; // Добавляем
             }
             break;
         case '\n': { // Enter (новая строка)
@@ -508,6 +569,7 @@ int editor_handle_input(AppState *state) {
             if (editor->cursor_y >= editor->scroll_y + static_cast<size_t>(max_y - 2)) {
                 editor->scroll_y++;
             }
+            editor->is_modified = true; // Добавляем
             break;
         }
         default:
@@ -523,6 +585,7 @@ int editor_handle_input(AppState *state) {
                 new_line[editor->cursor_x] = static_cast<char>(ch);
                 editor->cursor_x++;
                 editor->lines[editor->cursor_y] = new_line;
+                editor->is_modified = true; 
             }
             break;
     }

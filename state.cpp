@@ -157,7 +157,7 @@ void state_filter_files(AppState *state, const char *query) {
         return;
     }
 
-    // Выполняем рекурсивный поиск
+    // Выполняем поиск в текущей директории
     fs_search_recursive(state->current_dir, query, state->filtered_files);
 
     // Корректируем индекс выбранного элемента
