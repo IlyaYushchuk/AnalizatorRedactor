@@ -15,7 +15,7 @@ void ui_init() {
     noecho();
     keypad(stdscr, TRUE);
     mousemask(ALL_MOUSE_EVENTS | REPORT_MOUSE_POSITION, NULL);
-
+    raw();
     init_pair(1, COLOR_GREEN, COLOR_BLACK);
     init_pair(2, COLOR_YELLOW, COLOR_BLACK);
     init_pair(3, COLOR_WHITE, COLOR_BLACK);
@@ -79,7 +79,7 @@ void ui_draw(AppState *state) {
         }
 
         // Статусная строка
-        mvprintw(max_y - 1, 0, "q: Quit | Enter: Open | Arrows: Navigate | F3: Analyze | f: Search | F5: Create File | F6: Create Dir | F7: Rename | Ctrl+C: Copy | Ctrl+X: Cut | Ctrl+V: Paste");
+        mvprintw(max_y - 1, 0, "q: Quit | Enter: Open | Arrows: Navigate | F3: Analyze | f: Search | F5: Create File | F6: Create Dir | F7: Rename | Ctrl+C: Copy | Ctrl+X: Cut | Ctrl+V: Paste | F8: Delete");
     } else if (state->mode == MODE_EDITOR) {
         editor_draw(state);
     } else if (state->mode == MODE_ANALYSIS) {
@@ -103,7 +103,9 @@ int ui_handle_input(AppState *state) {
         static bool search_active = false;
 
         if (search_active) {
-            if (ch == 27) { // Esc
+            if (ch == 'q') {
+                return 0;
+            } else if (ch == 27) { // Esс
                 search_input[0] = '\0';
                 search_active = false;
                 state_filter_files(state, NULL);
@@ -223,6 +225,19 @@ int ui_handle_input(AppState *state) {
                     noecho();
                     if (strlen(new_name) > 0) {
                         fs_rename(state, display_files[state->selected_index].name, new_name);
+                    }
+                }
+            }
+                break;
+            case KEY_F(8): // Удаление
+            {
+                const std::vector<FileInfo> &display_files = state->filtered_files.size() > 0 ? state->filtered_files : state->files;
+                if (state->selected_index < static_cast<long long>(display_files.size())) {
+                    const FileInfo &file = display_files[state->selected_index];
+                    if (file.is_dir) {
+                        fs_delete_dir(state, file.name);
+                    } else {
+                        fs_delete_file(state, file.name);
                     }
                 }
             }

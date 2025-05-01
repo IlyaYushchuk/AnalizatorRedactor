@@ -306,3 +306,102 @@ void fs_paste(AppState *state, const char *dest_dir) {
     state->clipboard_is_cut = false;
     state_load_files(state); // Обновляем список файлов
 }
+
+// Удаление файла с подтверждением
+void fs_delete_file(AppState *state, const char *filename) {
+    if (!state || !filename) {
+        fprintf(stderr, "Error: fs_delete_file called with NULL state or filename\n");
+        return;
+    }
+    char full_path[PATH_MAX];
+    snprintf(full_path, sizeof(full_path), "%s/%s", state->current_dir, filename);
+
+    // Запрашиваем подтверждение
+    clear();
+    mvprintw(0, 0, "Delete file %s? (y/n)", filename);
+    refresh();
+    int confirm = getch();
+    if (confirm != 'y' && confirm != 'Y') {
+        printf("File deletion canceled: %s\n", full_path);
+        return;
+    }
+
+    if (unlink(full_path) == -1) {
+        fprintf(stderr, "Failed to delete file: %s (%s)\n", full_path, strerror(errno));
+        return;
+    }
+    printf("Deleted file: %s\n", full_path);
+    state_load_files(state); // Обновляем список файлов
+}
+
+// Рекурсивное удаление директории
+static int remove_directory(const char *path) {
+    DIR *dir = opendir(path);
+    if (!dir) {
+        fprintf(stderr, "Failed to open directory for deletion: %s\n", path);
+        return -1;
+    }
+
+    struct dirent *entry;
+    char full_path[PATH_MAX];
+    int ret = 0;
+
+    while ((entry = readdir(dir))) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+
+        snprintf(full_path, sizeof(full_path), "%s/%s", path, entry->d_name);
+
+        struct stat st;
+        if (stat(full_path, &st) == -1) continue;
+
+        if (S_ISDIR(st.st_mode)) {
+            if (remove_directory(full_path) == -1) {
+                ret = -1;
+            }
+        } else {
+            if (unlink(full_path) == -1) {
+                fprintf(stderr, "Failed to delete file in directory: %s\n", full_path);
+                ret = -1;
+            }
+        }
+    }
+    closedir(dir);
+
+    if (rmdir(path) == -1) {
+        fprintf(stderr, "Failed to delete directory: %s\n", path);
+        ret = -1;
+    }
+    return ret;
+}
+
+// Удаление директории с подтверждением
+void fs_delete_dir(AppState *state, const char *dirname) {
+    if (!state || !dirname) {
+        fprintf(stderr, "Error: fs_delete_dir called with NULL state or dirname\n");
+        return;
+    }
+    if (strcmp(dirname, "..") == 0) {
+        fprintf(stderr, "Cannot delete parent directory '..'");
+        return;
+    }
+
+    char full_path[PATH_MAX];
+    snprintf(full_path, sizeof(full_path), "%s/%s", state->current_dir, dirname);
+
+    // Запрашиваем подтверждение
+    clear();
+    mvprintw(0, 0, "Delete directory %s and all its contents? (y/n)", dirname);
+    refresh();
+    int confirm = getch();
+    if (confirm != 'y' && confirm != 'Y') {
+        printf("Directory deletion canceled: %s\n", full_path);
+        return;
+    }
+
+    if (remove_directory(full_path) == -1) {
+        fprintf(stderr, "Failed to delete directory: %s\n", full_path);
+        return;
+    }
+    printf("Deleted directory: %s\n", full_path);
+    state_load_files(state); // Обновляем список файлов
+}

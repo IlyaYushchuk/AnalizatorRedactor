@@ -2,6 +2,7 @@
 #define FILESYSTEM_H
 
 #include "state.h"
+#include <ncursesw/ncurses.h>
 #include <vector>
 
 // Функции для работы с файловой системой
@@ -15,5 +16,7 @@ void fs_rename(AppState *state, const char *old_name, const char *new_name);
 void fs_copy(AppState *state, const char *src_path);
 void fs_paste(AppState *state, const char *dest_dir);
 void fs_cut(AppState *state, const char *src_path);
+void fs_delete_file(AppState *state, const char *filename);
+void fs_delete_dir(AppState *state, const char *dirname);
 
 #endif
