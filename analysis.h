@@ -9,7 +9,5 @@
 void analysis_init(AnalysisResult *result);
 void analysis_free(AnalysisResult *result);
 void analysis_perform(AppState *state, time_t old_threshold);
-void analysis_draw(AppState *state);
-int analysis_handle_input(AppState *state);
 
 #endif

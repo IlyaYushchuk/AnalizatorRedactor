@@ -10,7 +10,8 @@
 typedef enum {
     MODE_BROWSE,    // Просмотр файлов/папок
     MODE_ANALYSIS,  // Режим анализа
-    MODE_EDITOR     // Режим редактора
+    MODE_EDITOR,     // Режим редактора
+    MODE_SEARCH      // Режим поиска
 } AppMode;
 
 // Структура для хранения информации о файле/папке

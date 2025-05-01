@@ -3,6 +3,7 @@
 
 #include "state.h"
 #include <ncursesw/ncurses.h>
+#include <openssl/md5.h>
 
 void ui_init();
 void ui_deinit();

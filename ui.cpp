@@ -2,20 +2,20 @@
 #include "filesystem.h"
 #include "editor.h"
 #include "analysis.h"
+#include "handlers.h"
 #include <locale.h>
 #include <string.h>
 #include <time.h>
-#include <ctype.h>
 
 void ui_init() {
     setlocale(LC_ALL, "");
     initscr();
     start_color();
-    cbreak();
+    raw(); 
     noecho();
     keypad(stdscr, TRUE);
     mousemask(ALL_MOUSE_EVENTS | REPORT_MOUSE_POSITION, NULL);
-    raw();
+
     init_pair(1, COLOR_GREEN, COLOR_BLACK);
     init_pair(2, COLOR_YELLOW, COLOR_BLACK);
     init_pair(3, COLOR_WHITE, COLOR_BLACK);
@@ -25,6 +25,220 @@ void ui_deinit() {
     endwin();
 }
 
+static void browse_draw(AppState *state) {
+    mvprintw(0, 0, "Directory: %s", state->current_dir ? state->current_dir : "(null)");
+
+    unsigned int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+    unsigned int start_y = 2;
+
+    const std::vector<FileInfo> &display_files = state->filtered_files.size() > 0 ? state->filtered_files : state->files;
+
+    for (size_t i = 0; i < display_files.size() && start_y + i < max_y - 2; i++) {
+        const FileInfo &file = display_files[i];
+        bool is_selected = (static_cast<long long>(i) == state->selected_index);
+
+        char time_str[20];
+        strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M", localtime(&file.mtime));
+
+        if (is_selected) {
+            attron(COLOR_PAIR(1));
+        } else if (file.is_dir) {
+            attron(COLOR_PAIR(2));
+        } else {
+            attron(COLOR_PAIR(3));
+        }
+
+        char display_name[100];
+        snprintf(display_name, sizeof(display_name), "%.90s", file.name ? file.name : "(null)");
+        mvprintw(start_y + i, 0, "%-50s %10lld %s", display_name, file.size, time_str);
+
+        if (is_selected) {
+            attroff(COLOR_PAIR(1));
+        } else if (file.is_dir) {
+            attroff(COLOR_PAIR(2));
+        } else {
+            attroff(COLOR_PAIR(3));
+        }
+    }
+
+    mvprintw(max_y - 1, 0, "q: Quit | Enter: Open | Arrows: Navigate | F3: Analyze | f: Search | F5: Create File | F6: Create Dir | F7: Rename | Ctrl+C: Copy | Ctrl+X: Cut | Ctrl+V: Paste | F8: Delete");
+}
+
+static void search_draw(AppState *state, const char *search_input) {
+    mvprintw(0, 0, "Directory: %s", state->current_dir ? state->current_dir : "(null)");
+
+    attron(COLOR_PAIR(2));
+    mvprintw(1, 0, "Search mode: '%s' (recursive)", search_input ? search_input : "");
+    attroff(COLOR_PAIR(2));
+
+    unsigned int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+    unsigned int start_y = 3;
+
+    const std::vector<FileInfo> &display_files = state->filtered_files;
+
+    for (size_t i = 0; i < display_files.size() && start_y + i < max_y - 2; i++) {
+        const FileInfo &file = display_files[i];
+        bool is_selected = (static_cast<long long>(i) == state->selected_index);
+
+        char time_str[20];
+        strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M", localtime(&file.mtime));
+
+        if (is_selected) {
+            attron(COLOR_PAIR(1));
+        } else if (file.is_dir) {
+            attron(COLOR_PAIR(2));
+        } else {
+            attron(COLOR_PAIR(3));
+        }
+
+        char display_name[100];
+        snprintf(display_name, sizeof(display_name), "%.90s", file.name ? file.name : "(null)");
+        mvprintw(start_y + i, 0, "%-50s %10lld %s", display_name, file.size, time_str);
+
+        if (is_selected) {
+            attroff(COLOR_PAIR(1));
+        } else if (file.is_dir) {
+            attroff(COLOR_PAIR(2));
+        } else {
+            attroff(COLOR_PAIR(3));
+        }
+    }
+
+    mvprintw(max_y - 1, 0, "q: Quit | Esc: Back | Enter: End Search | Backspace: Edit Query");
+}
+
+static void analysis_draw(AppState *state) {
+    if (!state || !state->analysis_result) {
+        printf("Error: analysis_draw called with NULL state or result\n");
+        clear();
+        mvprintw(0, 0, "Analysis failed: No results");
+        refresh();
+        return;
+    }
+
+    clear();
+    unsigned int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+    int y = 0;
+
+    mvprintw(y++, 0, "Analysis of directory: %s", state->current_dir);
+
+    size_t total_items = state->analysis_result->old_files.size() +
+                        state->analysis_result->empty_files.size() +
+                        state->analysis_result->empty_dirs.size();
+    for (const auto &dup : state->analysis_result->duplicates) {
+        if (dup.paths.size() > 1) total_items += dup.paths.size();
+    }
+
+    y++;
+    mvprintw(y++, 0, "Old files:");
+    size_t item_index = 0;
+    for (size_t i = 0; i < state->analysis_result->old_files.size(); i++) {
+        if (y >= max_y - 2) break;
+        bool selected = (state->analysis_result->section == AnalysisResult::SECTION_OLD &&
+                         state->analysis_result->selected_index == item_index);
+        if (selected) attron(COLOR_PAIR(1));
+        mvprintw(y++, 0, "  %s", state->analysis_result->old_files[i].c_str());
+        if (selected) attroff(COLOR_PAIR(1));
+        item_index++;
+    }
+
+    y++;
+    mvprintw(y++, 0, "Empty files:");
+    for (size_t i = 0; i < state->analysis_result->empty_files.size(); i++) {
+        if (y >= max_y - 2) break;
+        bool selected = (state->analysis_result->section == AnalysisResult::SECTION_EMPTY_FILES &&
+                         state->analysis_result->selected_index == item_index);
+        if (selected) attron(COLOR_PAIR(1));
+        mvprintw(y++, 0, "  %s", state->analysis_result->empty_files[i].c_str());
+        if (selected) attroff(COLOR_PAIR(1));
+        item_index++;
+    }
+
+    y++;
+    mvprintw(y++, 0, "Empty directories:");
+    for (size_t i = 0; i < state->analysis_result->empty_dirs.size(); i++) {
+        if (y >= max_y - 2) break;
+        bool selected = (state->analysis_result->section == AnalysisResult::SECTION_EMPTY_DIRS &&
+                         state->analysis_result->selected_index == item_index);
+        if (selected) attron(COLOR_PAIR(1));
+        mvprintw(y++, 0, "  %s", state->analysis_result->empty_dirs[i].c_str());
+        if (selected) attroff(COLOR_PAIR(1));
+        item_index++;
+    }
+
+    y++;
+    mvprintw(y++, 0, "Duplicate files:");
+    for (const DuplicateInfo &dup : state->analysis_result->duplicates) {
+        if (dup.paths.size() > 1) {
+            if (y >= max_y - 2) break;
+            mvprintw(y++, 0, "  Hash: %s", dup.hash.c_str());
+            for (size_t i = 0; i < dup.paths.size(); i++) {
+                if (y >= max_y - 2) break;
+                bool selected = (state->analysis_result->section == AnalysisResult::SECTION_DUPLICATES &&
+                                 state->analysis_result->selected_index == item_index);
+                if (selected) attron(COLOR_PAIR(1));
+                mvprintw(y++, 0, "    %s", dup.paths[i].c_str());
+                if (selected) attroff(COLOR_PAIR(1));
+                item_index++;
+            }
+        }
+    }
+
+    mvprintw(max_y - 1, 0, "q: Quit | Esc: Back | Arrows: Navigate | Enter: Open | F4: Delete");
+    refresh();
+}
+
+static void editor_draw(AppState *state) {
+    if (!state) {
+        fprintf(stderr, "Error: editor_draw called with NULL state\n");
+        return;
+    }
+    if (!state->edit_file) {
+        fprintf(stderr, "Error: edit_file is NULL\n");
+        state->mode = MODE_BROWSE;
+        return;
+    }
+    if (!state->editor_state) {
+        state->editor_state = (EditorState *)malloc(sizeof(EditorState));
+        if (!state->editor_state) {
+            fprintf(stderr, "Failed to allocate memory for editor_state\n");
+            state->mode = MODE_BROWSE;
+            return;
+        }
+        editor_init(state->editor_state);
+        editor_load_file(state->editor_state, state->edit_file);
+    }
+
+    EditorState *editor = state->editor_state;
+    if (!editor->lines || editor->line_count == 0) {
+        fprintf(stderr, "Error: editor lines not initialized\n");
+        state->mode = MODE_BROWSE;
+        return;
+    }
+
+    unsigned int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+    clear();
+
+    for (size_t i = 0; i < static_cast<size_t>(max_y - 2) && editor->scroll_y + i < editor->line_count; ++i) {
+        if (editor->lines[editor->scroll_y + i]) {
+            mvprintw(i, 0, "%s", editor->lines[editor->scroll_y + i]);
+        }
+        clrtoeol();
+    }
+
+    mvprintw(max_y - 1, 0, "Editing: %s | F2: Save | Esc: Exit | Arrows: Move | Enter: New Line | Backspace: Delete", state->edit_file);
+
+    if (editor->cursor_y >= editor->scroll_y && editor->cursor_y < editor->scroll_y + static_cast<size_t>(max_y - 2)) {
+        move(editor->cursor_y - editor->scroll_y, editor->cursor_x);
+    }
+
+    refresh();
+}
+
 void ui_draw(AppState *state) {
     if (!state) {
         fprintf(stderr, "Error: ui_draw called with NULL state\n");
@@ -32,54 +246,13 @@ void ui_draw(AppState *state) {
     }
     clear();
 
+    static char search_input[256] = "";
+    static bool search_active = true;
+
     if (state->mode == MODE_BROWSE) {
-        mvprintw(0, 0, "Directory: %s", state->current_dir ? state->current_dir : "(null)");
-
-        // Отображаем статус поиска
-        if (state->search_query && strlen(state->search_query) > 0) {
-            attron(COLOR_PAIR(2));
-            mvprintw(1, 0, "Режим поиска: '%s' (рекурсивный)", state->search_query);
-            attroff(COLOR_PAIR(2));
-        }
-
-        unsigned int max_y, max_x;
-        getmaxyx(stdscr, max_y, max_x);
-        unsigned int start_y = state->search_query ? 3 : 2; // Смещаем список если есть поиск
-
-        // Используем отфильтрованные файлы, если есть поиск
-        const std::vector<FileInfo> &display_files = state->filtered_files.size() > 0 ? state->filtered_files : state->files;
-
-        for (size_t i = 0; i < display_files.size() && start_y + i < max_y - 2; i++) {
-            const FileInfo &file = display_files[i];
-            bool is_selected = (static_cast<long long>(i) == state->selected_index);
-
-            char time_str[20];
-            strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M", localtime(&file.mtime));
-
-            if (is_selected) {
-                attron(COLOR_PAIR(1));
-            } else if (file.is_dir) {
-                attron(COLOR_PAIR(2));
-            } else {
-                attron(COLOR_PAIR(3));
-            }
-
-            // Ограничиваем длину имени файла
-            char display_name[100];
-            snprintf(display_name, sizeof(display_name), "%.90s", file.name ? file.name : "(null)");
-            mvprintw(start_y + i, 0, "%-50s %10lld %s", display_name, file.size, time_str);
-
-            if (is_selected) {
-                attroff(COLOR_PAIR(1));
-            } else if (file.is_dir) {
-                attroff(COLOR_PAIR(2));
-            } else {
-                attroff(COLOR_PAIR(3));
-            }
-        }
-
-        // Статусная строка
-        mvprintw(max_y - 1, 0, "q: Quit | Enter: Open | Arrows: Navigate | F3: Analyze | f: Search | F5: Create File | F6: Create Dir | F7: Rename | Ctrl+C: Copy | Ctrl+X: Cut | Ctrl+V: Paste | F8: Delete");
+        browse_draw(state);
+    } else if (state->mode == MODE_SEARCH) {
+        search_draw(state, search_input);
     } else if (state->mode == MODE_EDITOR) {
         editor_draw(state);
     } else if (state->mode == MODE_ANALYSIS) {
@@ -94,197 +267,14 @@ int ui_handle_input(AppState *state) {
         fprintf(stderr, "Error: ui_handle_input called with NULL state\n");
         return 0;
     }
+
+    static char search_input[256] = "";
+    static bool search_active = true;
+
     if (state->mode == MODE_BROWSE) {
-        int ch = getch();
-        MEVENT event;
-
-        // Режим ввода поискового запроса
-        static char search_input[256] = "";
-        static bool search_active = false;
-
-        if (search_active) {
-            if (ch == 'q') {
-                return 0;
-            } else if (ch == 27) { // Esс
-                search_input[0] = '\0';
-                search_active = false;
-                state_filter_files(state, NULL);
-            } else if (ch == '\n') {
-                state_filter_files(state, search_input);
-                search_input[0] = '\0';
-                search_active = false;
-            } else if (ch == KEY_BACKSPACE && strlen(search_input) > 0) {
-                search_input[strlen(search_input) - 1] = '\0';
-                state_filter_files(state, search_input);
-            } else if (ch >= 32 && ch <= 126 && strlen(search_input) < sizeof(search_input) - 1) {
-                search_input[strlen(search_input)] = static_cast<char>(ch);
-                search_input[strlen(search_input)] = '\0';
-                state_filter_files(state, search_input);
-            }
-            return 1;
-        }
-
-        switch (ch) {
-            case 'q':
-                return 0;
-            case KEY_UP:
-                state_select_index(state, state->selected_index > 0 ? state->selected_index - 1 : 0);
-                break;
-            case KEY_DOWN:
-            {
-                long long max_index = state->filtered_files.size() > 0 ? state->filtered_files.size() - 1 : state->files.size() - 1;
-                state_select_index(state, state->selected_index + 1 <= max_index ? state->selected_index + 1 : max_index);
-            }
-                break;
-            case '\n':
-            {
-                const std::vector<FileInfo> &display_files = state->filtered_files.size() > 0 ? state->filtered_files : state->files;
-                if (state->selected_index < static_cast<long long>(display_files.size())) {
-                    if (display_files[state->selected_index].is_dir) {
-                        fs_open_dir(state, display_files[state->selected_index].name);
-                    } else {
-                        printf("Attempting to open file: %s\n", display_files[state->selected_index].name);
-                        fs_open_file(state, display_files[state->selected_index].name);
-                    }
-                }
-            }
-                break;
-            case 'f': // Активация поиска
-                search_input[0] = '\0';
-                search_active = true;
-                state_filter_files(state, search_input);
-                break;
-            case KEY_F(3): // Анализ
-            {
-                clear();
-                mvprintw(0, 0, "Enter number of days for old files (default 180): ");
-                refresh();
-                echo();
-                char input[32] = "";
-                int y, x;
-                getyx(stdscr, y, x);
-                move(y, x);
-                getnstr(input, sizeof(input) - 1);
-                noecho();
-
-                long days = 180;
-                if (strlen(input) > 0) {
-                    char *endptr;
-                    days = strtol(input, &endptr, 10);
-                    if (*endptr != '\0' || days < 0) {
-                        mvprintw(1, 0, "Invalid input, using default (180 days)");
-                        refresh();
-                        getch();
-                        days = 180;
-                    }
-                }
-
-                time_t now = time(NULL);
-                time_t old_threshold = now - days * 24 * 3600;
-                analysis_perform(state, old_threshold);
-            }
-                break;
-            case KEY_F(5): // Создание файла
-            {
-                clear();
-                mvprintw(0, 0, "Enter new file name: ");
-                refresh();
-                echo();
-                char filename[256] = "";
-                getnstr(filename, sizeof(filename) - 1);
-                noecho();
-                if (strlen(filename) > 0) {
-                    fs_create_file(state, filename);
-                }
-            }
-                break;
-            case KEY_F(6): // Создание папки
-            {
-                clear();
-                mvprintw(0, 0, "Enter new directory name: ");
-                refresh();
-                echo();
-                char dirname[256] = "";
-                getnstr(dirname, sizeof(dirname) - 1);
-                noecho();
-                if (strlen(dirname) > 0) {
-                    fs_create_dir(state, dirname);
-                }
-            }
-                break;
-            case KEY_F(7): // Переименование
-            {
-                const std::vector<FileInfo> &display_files = state->filtered_files.size() > 0 ? state->filtered_files : state->files;
-                if (state->selected_index < static_cast<long long>(display_files.size())) {
-                    clear();
-                    mvprintw(0, 0, "Enter new name for %s: ", display_files[state->selected_index].name);
-                    refresh();
-                    echo();
-                    char new_name[256] = "";
-                    getnstr(new_name, sizeof(new_name) - 1);
-                    noecho();
-                    if (strlen(new_name) > 0) {
-                        fs_rename(state, display_files[state->selected_index].name, new_name);
-                    }
-                }
-            }
-                break;
-            case KEY_F(8): // Удаление
-            {
-                const std::vector<FileInfo> &display_files = state->filtered_files.size() > 0 ? state->filtered_files : state->files;
-                if (state->selected_index < static_cast<long long>(display_files.size())) {
-                    const FileInfo &file = display_files[state->selected_index];
-                    if (file.is_dir) {
-                        fs_delete_dir(state, file.name);
-                    } else {
-                        fs_delete_file(state, file.name);
-                    }
-                }
-            }
-                break;
-            case 3: // Ctrl+C (копирование)
-            {
-                const std::vector<FileInfo> &display_files = state->filtered_files.size() > 0 ? state->filtered_files : state->files;
-                if (state->selected_index < static_cast<long long>(display_files.size())) {
-                    fs_copy(state, display_files[state->selected_index].name);
-                }
-            }
-                break;
-            case 24: // Ctrl+X (вырезание)
-            {
-                const std::vector<FileInfo> &display_files = state->filtered_files.size() > 0 ? state->filtered_files : state->files;
-                if (state->selected_index < static_cast<long long>(display_files.size())) {
-                    fs_cut(state, display_files[state->selected_index].name);
-                }
-            }
-                break;
-            case 22: // Ctrl+V (вставка)
-            {
-                if (state->clipboard_path) {
-                    fs_paste(state, state->current_dir);
-                }
-            }
-                break;
-            case KEY_MOUSE:
-                if (getmouse(&event) == OK) {
-                    unsigned int max_y, max_x;
-                    getmaxyx(stdscr, max_y, max_x);
-                    long long display_file_count = state->filtered_files.size() > 0 ? state->filtered_files.size() : state->files.size();
-                    if (event.y >= 2 && static_cast<long long>(event.y) < 2 + display_file_count && event.y < max_y - 1) {
-                        state_select_index(state, event.y - 2);
-                        if (event.bstate & BUTTON1_CLICKED) {
-                            const std::vector<FileInfo> &display_files = state->filtered_files.size() > 0 ? state->filtered_files : state->files;
-                            if (display_files[state->selected_index].is_dir) {
-                                fs_open_dir(state, display_files[state->selected_index].name);
-                            } else {
-                                printf("Mouse click: attempting to open file: %s\n", display_files[state->selected_index].name);
-                                fs_open_file(state, display_files[state->selected_index].name);
-                            }
-                        }
-                    }
-                }
-                break;
-        }
+        return browse_handle_input(state);
+    } else if (state->mode == MODE_SEARCH) {
+        return search_handle_input(state, search_input, &search_active);
     } else if (state->mode == MODE_EDITOR) {
         return editor_handle_input(state);
     } else if (state->mode == MODE_ANALYSIS) {
