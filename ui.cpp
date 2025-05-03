@@ -93,7 +93,7 @@ static void browse_draw(AppState *state) {
     unsigned int start_y = 2;
 
     // Определяем ширину столбцов
-    const int name_width = 50; // Ширина для имени файла/папки
+    const int name_width = 100; // Ширина для имени файла/папки
     const int size_width = 10; // Ширина для размера
     const int date_width = 20; // Ширина для даты
 
@@ -113,7 +113,8 @@ static void browse_draw(AppState *state) {
 
     const std::vector<FileInfo> &display_files = state->filtered_files.size() > 0 ? state->filtered_files : state->files;
 
-    for (size_t i = 0; i < display_files.size() && start_y + i < max_y - 3; i++) {
+    size_t visible_rows = max_y - start_y - 2; // Учитываем 2 строки снизу для подсказок
+    for (size_t i = state->scroll_y; i < display_files.size() && (i - state->scroll_y) < visible_rows; i++) {
         const FileInfo &file = display_files[i];
         bool is_selected = (static_cast<long long>(i) == state->selected_index);
 
@@ -156,7 +157,7 @@ static void browse_draw(AppState *state) {
         }
 
         attron(COLOR_PAIR(color_pair));
-        move(start_y + i, 0);
+        move(start_y + (i - state->scroll_y), 0);
         addwstr(display_name_w);
         addwstr(display_size);
         addwstr(display_date);
@@ -198,8 +199,9 @@ static void search_draw(AppState *state) {
     start_y++;
 
     const std::vector<FileInfo> &display_files = state->filtered_files;
-
-    for (size_t i = 0; i < display_files.size() && start_y + i < max_y - 2; i++) {
+    getmaxyx(stdscr, max_y, max_x);
+    size_t visible_rows = max_y - start_y - 2;
+    for (size_t i = state->scroll_y; i < display_files.size() && (i - state->scroll_y) < visible_rows; i++) {
         const FileInfo &file = display_files[i];
         bool is_selected = (static_cast<long long>(i) == state->selected_index);
 
@@ -229,8 +231,8 @@ static void search_draw(AppState *state) {
             attron(COLOR_PAIR(3));
         }
 
-        // Вывод строки
-        move(start_y + i, 0);
+        // Вывод строки  
+        move(start_y + (i - state->scroll_y), 0);
         addwstr(display_name);
         addwstr(display_size);
         addwstr(display_date);
@@ -249,14 +251,6 @@ static void search_draw(AppState *state) {
 }
 
 static void analysis_draw(AppState *state) {
-    if (!state || !state->analysis_result) {
-        printf("Error: analysis_draw called with NULL state or result\n");
-        clear();
-        mvprintw(0, 0, "Analysis failed: No results");
-        refresh();
-        return;
-    }
-
     clear();
     unsigned int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
@@ -271,57 +265,88 @@ static void analysis_draw(AppState *state) {
         if (dup.paths.size() > 1) total_items += dup.paths.size();
     }
 
-    y++;
-    mvprintw(y++, 0, "Old files:");
-    size_t item_index = 0;
-    for (size_t i = 0; i < state->analysis_result->old_files.size(); i++) {
-        if (y >= max_y - 2) break;
-        bool selected = (state->analysis_result->section == AnalysisResult::SECTION_OLD &&
-                         state->analysis_result->selected_index == item_index);
-        if (selected) attron(COLOR_PAIR(1));
-        mvprintw(y++, 0, "  %s", state->analysis_result->old_files[i].c_str());
-        if (selected) attroff(COLOR_PAIR(1));
-        item_index++;
+    size_t visible_rows = max_y - y - 1; // Учитываем строку подсказки
+    size_t item_index = state->scroll_y;
+    size_t display_y = y;
+
+    // Пропускаем элементы до scroll_y
+    while (item_index < state->scroll_y) {
+        if (item_index < state->analysis_result->old_files.size()) {
+            item_index++;
+        } else if (item_index < state->analysis_result->old_files.size() + state->analysis_result->empty_files.size()) {
+            item_index++;
+        } else if (item_index < state->analysis_result->old_files.size() + state->analysis_result->empty_files.size() + state->analysis_result->empty_dirs.size()) {
+            item_index++;
+        } else {
+            size_t dup_idx = item_index - (state->analysis_result->old_files.size() + state->analysis_result->empty_files.size() + state->analysis_result->empty_dirs.size());
+            for (const auto &dup : state->analysis_result->duplicates) {
+                if (dup.paths.size() > 1) {
+                    if (dup_idx < dup.paths.size()) {
+                        dup_idx = 0;
+                        item_index += dup.paths.size();
+                        break;
+                    }
+                    dup_idx -= dup.paths.size();
+                }
+            }
+        }
     }
 
+    // Отображаем элементы
     y++;
-    mvprintw(y++, 0, "Empty files:");
-    for (size_t i = 0; i < state->analysis_result->empty_files.size(); i++) {
-        if (y >= max_y - 2) break;
-        bool selected = (state->analysis_result->section == AnalysisResult::SECTION_EMPTY_FILES &&
-                         state->analysis_result->selected_index == item_index);
-        if (selected) attron(COLOR_PAIR(1));
-        mvprintw(y++, 0, "  %s", state->analysis_result->empty_files[i].c_str());
-        if (selected) attroff(COLOR_PAIR(1));
-        item_index++;
+    if (item_index < state->analysis_result->old_files.size()) {
+        mvprintw(y++, 0, "Old files:");
+        for (size_t i = item_index; i < state->analysis_result->old_files.size() && display_y < max_y - 1; i++) {
+            bool selected = (state->analysis_result->section == AnalysisResult::SECTION_OLD &&
+                            state->analysis_result->selected_index == item_index);
+            if (selected) attron(COLOR_PAIR(1));
+            mvprintw(display_y++, 0, "  %s", state->analysis_result->old_files[i].c_str());
+            if (selected) attroff(COLOR_PAIR(1));
+            item_index++;
+        }
     }
 
-    y++;
-    mvprintw(y++, 0, "Empty directories:");
-    for (size_t i = 0; i < state->analysis_result->empty_dirs.size(); i++) {
-        if (y >= max_y - 2) break;
-        bool selected = (state->analysis_result->section == AnalysisResult::SECTION_EMPTY_DIRS &&
-                         state->analysis_result->selected_index == item_index);
-        if (selected) attron(COLOR_PAIR(1));
-        mvprintw(y++, 0, "  %s", state->analysis_result->empty_dirs[i].c_str());
-        if (selected) attroff(COLOR_PAIR(1));
-        item_index++;
+    if (item_index < state->analysis_result->old_files.size() + state->analysis_result->empty_files.size()) {
+        mvprintw(y++, 0, "Empty files:");
+        for (size_t i = item_index - state->analysis_result->old_files.size(); i < state->analysis_result->empty_files.size() && display_y < max_y - 1; i++) {
+            bool selected = (state->analysis_result->section == AnalysisResult::SECTION_EMPTY_FILES &&
+                            state->analysis_result->selected_index == item_index);
+            if (selected) attron(COLOR_PAIR(1));
+            mvprintw(display_y++, 0, "  %s", state->analysis_result->empty_files[i].c_str());
+            if (selected) attroff(COLOR_PAIR(1));
+            item_index++;
+        }
     }
 
-    y++;
-    mvprintw(y++, 0, "Duplicate files:");
-    for (const DuplicateInfo &dup : state->analysis_result->duplicates) {
-        if (dup.paths.size() > 1) {
-            if (y >= max_y - 2) break;
-            mvprintw(y++, 0, "  Hash: %s", dup.hash.c_str());
-            for (size_t i = 0; i < dup.paths.size(); i++) {
-                if (y >= max_y - 2) break;
-                bool selected = (state->analysis_result->section == AnalysisResult::SECTION_DUPLICATES &&
-                                 state->analysis_result->selected_index == item_index);
-                if (selected) attron(COLOR_PAIR(1));
-                mvprintw(y++, 0, "    %s", dup.paths[i].c_str());
-                if (selected) attroff(COLOR_PAIR(1));
-                item_index++;
+    if (item_index < state->analysis_result->old_files.size() + state->analysis_result->empty_files.size() + state->analysis_result->empty_dirs.size()) {
+        mvprintw(y++, 0, "Empty directories:");
+        for (size_t i = item_index - (state->analysis_result->old_files.size() + state->analysis_result->empty_files.size()); i < state->analysis_result->empty_dirs.size() && display_y < max_y - 1; i++) {
+            bool selected = (state->analysis_result->section == AnalysisResult::SECTION_EMPTY_DIRS &&
+                            state->analysis_result->selected_index == item_index);
+            if (selected) attron(COLOR_PAIR(1));
+            mvprintw(display_y++, 0, "  %s", state->analysis_result->empty_dirs[i].c_str());
+            if (selected) attroff(COLOR_PAIR(1));
+            item_index++;
+        }
+    }
+
+    if (item_index < total_items) {
+        mvprintw(y++, 0, "Duplicate files:");
+        for (const DuplicateInfo &dup : state->analysis_result->duplicates) {
+            if (dup.paths.size() > 1) {
+                if (display_y < max_y - 1) {
+                    mvprintw(display_y++, 0, "  Hash: %s", dup.hash.c_str());
+                }
+                for (size_t i = (item_index >= state->analysis_result->old_files.size() + state->analysis_result->empty_files.size() + state->analysis_result->empty_dirs.size()) ?
+                    (item_index - (state->analysis_result->old_files.size() + state->analysis_result->empty_files.size() + state->analysis_result->empty_dirs.size())) % dup.paths.size() : 0;
+                    i < dup.paths.size() && display_y < max_y - 1; i++) {
+                    bool selected = (state->analysis_result->section == AnalysisResult::SECTION_DUPLICATES &&
+                                    state->analysis_result->selected_index == item_index);
+                    if (selected) attron(COLOR_PAIR(1));
+                    mvprintw(display_y++, 0, "    %s", dup.paths[i].c_str());
+                    if (selected) attroff(COLOR_PAIR(1));
+                    item_index++;
+                }
             }
         }
     }

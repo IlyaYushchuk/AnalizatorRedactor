@@ -74,6 +74,7 @@ typedef struct {
     SortType sort_type;
     char search_input[256];     // Текущий ввод поискового запроса
     bool search_active;         // Флаг активности поиска
+    size_t scroll_y;
 } AppState;
 
 // Функции менеджера состояния

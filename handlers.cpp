@@ -24,15 +24,6 @@ int browse_handle_input(AppState *state) {
         case 'q':
             quit = true;
             return 0;
-        case KEY_UP:
-            state_select_index(state, state->selected_index > 0 ? state->selected_index - 1 : 0);
-            break;
-        case KEY_DOWN:
-        {
-            long long max_index = state->filtered_files.size() > 0 ? state->filtered_files.size() - 1 : state->files.size() - 1;
-            state_select_index(state, state->selected_index + 1 <= max_index ? state->selected_index + 1 : max_index);
-        }
-            break;
         case '\n':
         {
             const std::vector<FileInfo> &display_files = state->filtered_files.size() > 0 ? state->filtered_files : state->files;
@@ -209,6 +200,31 @@ int browse_handle_input(AppState *state) {
                 }
             }
             break;
+        case KEY_UP:
+            if (state->selected_index > 0) {
+                state->selected_index--;
+                unsigned int max_y, max_x;
+                getmaxyx(stdscr, max_y, max_x);
+                size_t visible_rows = max_y - 3 - 2; // start_y = 3, 2 строки подсказки
+                if (state->selected_index < state->scroll_y) {
+                    state->scroll_y--;
+                }
+            }
+            break;
+        case KEY_DOWN:
+        {
+            long long max_index = state->filtered_files.size() > 0 ? state->filtered_files.size() - 1 : state->files.size() - 1;
+            if (state->selected_index < max_index) {
+                state->selected_index++;
+                unsigned int max_y, max_x;
+                getmaxyx(stdscr, max_y, max_x);
+                size_t visible_rows = max_y - 3 - 2; // start_y = 3, 2 строки подсказки
+                if (state->selected_index >= state->scroll_y + visible_rows) {
+                    state->scroll_y++;
+                }
+            }
+        }
+            break;
         case 27: // Esc
             state_filter_files(state, NULL);
             break;
@@ -247,6 +263,29 @@ int search_handle_input(AppState *state) {
     int ch = getch();
     if (ch == 'q') { // Выход по q
         return 0;
+    }else if (ch == KEY_UP) {
+        if (state->selected_index > 0) {
+            state->selected_index--;
+            unsigned int max_y, max_x;
+            getmaxyx(stdscr, max_y, max_x);
+            size_t visible_rows = max_y - 3 - 2; // start_y = 3, строка ввода + подсказка
+            if (state->selected_index < state->scroll_y) {
+                state->scroll_y--;
+            }
+        }
+        ui_draw(state);
+    } else if (ch == KEY_DOWN) {
+        long long max_index = state->filtered_files.size() - 1;
+        if (state->selected_index < max_index) {
+            state->selected_index++;
+            unsigned int max_y, max_x;
+            getmaxyx(stdscr, max_y, max_x);
+            size_t visible_rows = max_y - 3 - 2; // start_y = 3, строка ввода + подсказка
+            if (state->selected_index >= state->scroll_y + visible_rows) {
+                state->scroll_y++;
+            }
+        }
+        ui_draw(state);
     } else if (ch == 27) { // Esc
         state->search_input[0] = '\0';
         state->search_active = false;
@@ -262,8 +301,9 @@ int search_handle_input(AppState *state) {
         state_filter_files(state, state->search_input);
         ui_draw(state);
     } else if (ch >= 32 && ch <= 126 && strlen(state->search_input) < 256 - 1) {
-        state->search_input[strlen(state->search_input)] = static_cast<char>(ch);
-        state->search_input[strlen(state->search_input)] = '\0';
+        size_t len = strlen(state->search_input);
+        state->search_input[len] = static_cast<char>(ch);
+        state->search_input[len + 1] = '\0';
         state_filter_files(state, state->search_input);
         ui_draw(state);
     }
@@ -294,13 +334,19 @@ int analysis_handle_input(AppState *state) {
         case KEY_UP:
             if (result->selected_index > 0) {
                 result->selected_index--;
+                unsigned int max_y, max_x;
+                getmaxyx(stdscr, max_y, max_x);
+                size_t visible_rows = max_y - 2 - 1; // y=2 после заголовка, 1 строка подсказки
+                if (result->selected_index < state->scroll_y) {
+                    state->scroll_y--;
+                }
                 // Обновляем секцию
-                size_t idx = 0;
-                if (result->selected_index < result->old_files.size()) {
+                size_t idx = result->selected_index;
+                if (idx < result->old_files.size()) {
                     result->section = AnalysisResult::SECTION_OLD;
-                } else if (result->selected_index < result->old_files.size() + result->empty_files.size()) {
+                } else if (idx < result->old_files.size() + result->empty_files.size()) {
                     result->section = AnalysisResult::SECTION_EMPTY_FILES;
-                } else if (result->selected_index < result->old_files.size() + result->empty_files.size() + result->empty_dirs.size()) {
+                } else if (idx < result->old_files.size() + result->empty_files.size() + result->empty_dirs.size()) {
                     result->section = AnalysisResult::SECTION_EMPTY_DIRS;
                 } else {
                     result->section = AnalysisResult::SECTION_DUPLICATES;
@@ -310,13 +356,19 @@ int analysis_handle_input(AppState *state) {
         case KEY_DOWN:
             if (result->selected_index + 1 < total_items) {
                 result->selected_index++;
+                unsigned int max_y, max_x;
+                getmaxyx(stdscr, max_y, max_x);
+                size_t visible_rows = max_y - 2 - 1; // y=2 после заголовка, 1 строка подсказки
+                if (result->selected_index >= state->scroll_y + visible_rows) {
+                    state->scroll_y++;
+                }
                 // Обновляем секцию
-                size_t idx = 0;
-                if (result->selected_index < result->old_files.size()) {
+                size_t idx = result->selected_index;
+                if (idx < result->old_files.size()) {
                     result->section = AnalysisResult::SECTION_OLD;
-                } else if (result->selected_index < result->old_files.size() + result->empty_files.size()) {
+                } else if (idx < result->old_files.size() + result->empty_files.size()) {
                     result->section = AnalysisResult::SECTION_EMPTY_FILES;
-                } else if (result->selected_index < result->old_files.size() + result->empty_files.size() + result->empty_dirs.size()) {
+                } else if (idx < result->old_files.size() + result->empty_files.size() + result->empty_dirs.size()) {
                     result->section = AnalysisResult::SECTION_EMPTY_DIRS;
                 } else {
                     result->section = AnalysisResult::SECTION_DUPLICATES;
