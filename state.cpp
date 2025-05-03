@@ -21,6 +21,8 @@ void state_init(AppState *state) {
     state->clipboard_path = NULL;
     state->clipboard_is_cut = false;
     state->sort_type = SORT_BY_NAME_ASC;
+     state->search_input[0] = '\0'; 
+    state->search_active = true;  
     state_load_files(state);
 }
 

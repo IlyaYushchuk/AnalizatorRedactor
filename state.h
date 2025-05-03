@@ -72,6 +72,8 @@ typedef struct {
     char *clipboard_path;       // Путь к файлу/папке в буфере обмена
     bool clipboard_is_cut;      // Флаг: true для вырезания, false для копирования
     SortType sort_type;
+    char search_input[256];     // Текущий ввод поискового запроса
+    bool search_active;         // Флаг активности поиска
 } AppState;
 
 // Функции менеджера состояния

@@ -7,6 +7,7 @@
 #include <locale.h>
 #include <string.h>
 #include <time.h>
+#include <string>
 
 // Подсчитывает видимую ширину строки UTF-8
 static int get_display_width(const char *str) {
@@ -112,7 +113,7 @@ static void browse_draw(AppState *state) {
 
     const std::vector<FileInfo> &display_files = state->filtered_files.size() > 0 ? state->filtered_files : state->files;
 
-    for (size_t i = 0; i < display_files.size() && start_y + i < max_y - 2; i++) {
+    for (size_t i = 0; i < display_files.size() && start_y + i < max_y - 3; i++) {
         const FileInfo &file = display_files[i];
         bool is_selected = (static_cast<long long>(i) == state->selected_index);
 
@@ -162,14 +163,15 @@ static void browse_draw(AppState *state) {
         attroff(COLOR_PAIR(color_pair));
     }
 
-    mvprintw(max_y - 1, 0, "q: Quit | Enter: Open | Arrows: Navigate | F3: Analyze | f: Search | F5: Create File | F6: Create Dir | F7: Rename | Ctrl+C: Copy | Ctrl+X: Cut | Ctrl+V: Paste | F8: Delete | s/S: Sort by Name | z/Z: Sort by Size | d/D: Sort by Date | h: Home | /: Root");
+    mvprintw(max_y - 2, 0, "q: Quit | Enter: Open | Arrows: Navigate | F3: Analyze | f: Search | F5: Create File | F6: Create Dir");
+    mvprintw(max_y - 1, 0, "F7: Rename | Ctrl+C: Copy | Ctrl+X: Cut | Ctrl+V: Paste | F8: Delete | s/S: Sort by Name | z/Z: Sort by Size | d/D: Sort by Date");
 }
 
-static void search_draw(AppState *state, const char *search_input) {
+static void search_draw(AppState *state) {
     mvprintw(0, 0, "Directory: %s", state->current_dir ? state->current_dir : "(null)");
 
     attron(COLOR_PAIR(2));
-    mvprintw(1, 0, "Search mode: '%s' (recursive)", search_input ? search_input : "");
+    mvprintw(1, 0, "Search mode: '%s' (recursive)", state->search_input);
     attroff(COLOR_PAIR(2));
 
     unsigned int max_y, max_x;
@@ -383,13 +385,11 @@ void ui_draw(AppState *state) {
     }
     clear();
 
-    static char search_input[256] = "";
-    static bool search_active = true;
 
     if (state->mode == MODE_BROWSE) {
         browse_draw(state);
     } else if (state->mode == MODE_SEARCH) {
-        search_draw(state, search_input);
+        search_draw(state);
     } else if (state->mode == MODE_EDITOR) {
         editor_draw(state);
     } else if (state->mode == MODE_ANALYSIS) {
@@ -405,13 +405,12 @@ int ui_handle_input(AppState *state) {
         return 0;
     }
 
-    static char search_input[256] = "";
-    static bool search_active = true;
+   
 
     if (state->mode == MODE_BROWSE) {
         return browse_handle_input(state);
     } else if (state->mode == MODE_SEARCH) {
-        return search_handle_input(state, search_input, &search_active);
+        return search_handle_input(state);
     } else if (state->mode == MODE_EDITOR) {
         return editor_handle_input(state);
     } else if (state->mode == MODE_ANALYSIS) {

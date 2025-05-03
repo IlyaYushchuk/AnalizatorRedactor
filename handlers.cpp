@@ -194,8 +194,9 @@ int browse_handle_input(AppState *state) {
                 unsigned int max_y, max_x;
                 getmaxyx(stdscr, max_y, max_x);
                 long long display_file_count = state->filtered_files.size() > 0 ? state->filtered_files.size() : state->files.size();
-                if (event.y >= 2 && static_cast<long long>(event.y) < 2 + display_file_count && event.y < max_y - 1) {
-                    state_select_index(state, event.y - 2);
+                const unsigned int start_y = 3; 
+                if (event.y >= start_y && static_cast<long long>(event.y) < start_y + display_file_count && event.y < max_y - 2) {
+                    state_select_index(state, event.y - start_y);
                     if (event.bstate & BUTTON1_CLICKED) {
                         const std::vector<FileInfo> &display_files = state->filtered_files.size() > 0 ? state->filtered_files : state->files;
                         if (display_files[state->selected_index].is_dir) {
@@ -241,33 +242,29 @@ int browse_handle_input(AppState *state) {
     return 1;
 }
 
-int search_handle_input(AppState *state, char *search_input, bool *search_active) {
-    if (!state || !search_input || !search_active) {
-        fprintf(stderr, "Error: search_handle_input called with NULL arguments\n");
-        return 0;
-    }
-
+int search_handle_input(AppState *state) {
+   
     int ch = getch();
     if (ch == 'q') { // Выход по q
         return 0;
     } else if (ch == 27) { // Esc
-        search_input[0] = '\0';
-        *search_active = false;
+        state->search_input[0] = '\0';
+        state->search_active = false;
         state_filter_files(state, NULL);
         state->mode = MODE_BROWSE;
     } else if (ch == '\n') {
-        state_filter_files(state, search_input);
-        search_input[0] = '\0';
-        *search_active = false;
+        state_filter_files(state, state->search_input);
+        state->search_input[0] = '\0';
+        state->search_active = false;
         state->mode = MODE_BROWSE;
-    } else if (ch == KEY_BACKSPACE && strlen(search_input) > 0) {
-        search_input[strlen(search_input) - 1] = '\0';
-        state_filter_files(state, search_input);
+    } else if (ch == KEY_BACKSPACE && strlen(state->search_input) > 0) {
+        state->search_input[strlen(state->search_input) - 1] = '\0';
+        state_filter_files(state, state->search_input);
         ui_draw(state);
-    } else if (ch >= 32 && ch <= 126 && strlen(search_input) < 256 - 1) {
-        search_input[strlen(search_input)] = static_cast<char>(ch);
-        search_input[strlen(search_input)] = '\0';
-        state_filter_files(state, search_input);
+    } else if (ch >= 32 && ch <= 126 && strlen(state->search_input) < 256 - 1) {
+        state->search_input[strlen(state->search_input)] = static_cast<char>(ch);
+        state->search_input[strlen(state->search_input)] = '\0';
+        state_filter_files(state, state->search_input);
         ui_draw(state);
     }
     return 1;

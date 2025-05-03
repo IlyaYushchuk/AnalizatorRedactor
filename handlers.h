@@ -6,7 +6,7 @@
 
 // Обработчики ввода для каждого режима
 int browse_handle_input(AppState *state);
-int search_handle_input(AppState *state, char *search_input, bool *search_active);
+int search_handle_input(AppState *state);
 int analysis_handle_input(AppState *state);
 int editor_handle_input(AppState *state);
 
