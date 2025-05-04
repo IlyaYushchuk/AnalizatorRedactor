@@ -6,6 +6,9 @@
 #include <algorithm>
 #include <stack>
 #include <unistd.h>
+#include <ctime>
+#include <pwd.h>
+#include <grp.h>
 
 void analysis_init(AnalysisResult *result) {
     if (!result) {
@@ -174,3 +177,70 @@ void analysis_perform(AppState *state, time_t old_threshold) {
     state->mode = MODE_ANALYSIS;
 }
 
+Metadata analysis_get_metadata(const char *full_path) {
+    Metadata meta = {};
+    if (!full_path) {
+        fprintf(stderr, "Error: analysis_get_metadata called with NULL path\n");
+        return meta;
+    }
+
+    // Получаем метаданные файла
+    struct stat st;
+    if (stat(full_path, &st) == -1) {
+        fprintf(stderr, "Failed to stat file: %s\n", full_path);
+        return meta;
+    }
+
+    // Имя файла (берём только имя из полного пути)
+    const char *filename = strrchr(full_path, '/');
+    meta.name = filename ? filename + 1 : full_path;
+
+    // Тип (директория или файл)
+    meta.is_dir = S_ISDIR(st.st_mode);
+
+    // Размер
+    meta.size = st.st_size;
+
+    // Время последнего изменения
+    char mtime_str[50];
+    strftime(mtime_str, sizeof(mtime_str), "%Y-%m-%d %H:%M:%S", localtime(&st.st_mtime));
+    meta.mtime = mtime_str;
+
+    // Время последнего доступа
+    char atime_str[50];
+    strftime(atime_str, sizeof(atime_str), "%Y-%m-%d %H:%M:%S", localtime(&st.st_atime));
+    meta.atime = atime_str;
+
+    // Время изменения статуса
+    char ctime_str[50];
+    strftime(ctime_str, sizeof(ctime_str), "%Y-%m-%d %H:%M:%S", localtime(&st.st_ctime));
+    meta.ctime = ctime_str;
+
+    // Права доступа
+    char permissions[11];
+    snprintf(permissions, sizeof(permissions), "%c%c%c%c%c%c%c%c%c",
+             (S_ISDIR(st.st_mode)) ? 'd' : '-',
+             (st.st_mode & S_IRUSR) ? 'r' : '-',
+             (st.st_mode & S_IWUSR) ? 'w' : '-',
+             (st.st_mode & S_IXUSR) ? 'x' : '-',
+             (st.st_mode & S_IRGRP) ? 'r' : '-',
+             (st.st_mode & S_IWGRP) ? 'w' : '-',
+             (st.st_mode & S_IXGRP) ? 'x' : '-',
+             (st.st_mode & S_IROTH) ? 'r' : '-',
+             (st.st_mode & S_IWOTH) ? 'w' : '-',
+             (st.st_mode & S_IXOTH) ? 'x' : '-');
+    meta.permissions = permissions;
+
+    // Владелец
+    struct passwd *pw = getpwuid(st.st_uid);
+    meta.owner = pw ? pw->pw_name : "unknown";
+
+    // Группа
+    struct group *gr = getgrgid(st.st_gid);
+    meta.group = gr ? gr->gr_name : "unknown";
+
+    // Номер инода
+    meta.inode = st.st_ino;
+
+    return meta;
+}

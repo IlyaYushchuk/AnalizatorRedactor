@@ -52,6 +52,7 @@ void editor_load_file(EditorState *editor, const char *filename);
 #include <locale.h>
 #include <string.h>
 #include <time.h>
+#include <string>
 
 // Подсчитывает видимую ширину строки UTF-8
 static int get_display_width(const char *str) {
@@ -118,7 +119,8 @@ void ui_init() {
     keypad(stdscr, TRUE);
     mousemask(ALL_MOUSE_EVENTS | REPORT_MOUSE_POSITION, NULL);
 
-    init_pair(1, COLOR_GREEN, COLOR_BLACK);  // Выделенный элемент
+    bkgd(COLOR_PAIR(3)); // Устанавливает фон всего окна
+    init_pair(1, COLOR_BLACK, COLOR_WHITE);  // Выделенный элемент
     init_pair(2, COLOR_YELLOW, COLOR_BLACK); // Директории
     init_pair(3, COLOR_WHITE, COLOR_BLACK);   // Обычные файлы
     init_pair(4, COLOR_CYAN, COLOR_BLACK);   // Исполняемые файлы
@@ -137,7 +139,7 @@ static void browse_draw(AppState *state) {
     unsigned int start_y = 2;
 
     // Определяем ширину столбцов
-    const int name_width = 50; // Ширина для имени файла/папки
+    const int name_width = 100; // Ширина для имени файла/папки
     const int size_width = 10; // Ширина для размера
     const int date_width = 20; // Ширина для даты
 
@@ -157,7 +159,8 @@ static void browse_draw(AppState *state) {
 
     const std::vector<FileInfo> &display_files = state->filtered_files.size() > 0 ? state->filtered_files : state->files;
 
-    for (size_t i = 0; i < display_files.size() && start_y + i < max_y - 2; i++) {
+    size_t visible_rows = max_y - start_y - 2; // Учитываем 2 строки снизу для подсказок
+    for (size_t i = state->scroll_y; i < display_files.size() && (i - state->scroll_y) < visible_rows; i++) {
         const FileInfo &file = display_files[i];
         bool is_selected = (static_cast<long long>(i) == state->selected_index);
 
@@ -200,21 +203,22 @@ static void browse_draw(AppState *state) {
         }
 
         attron(COLOR_PAIR(color_pair));
-        move(start_y + i, 0);
+        move(start_y + (i - state->scroll_y), 0);
         addwstr(display_name_w);
         addwstr(display_size);
         addwstr(display_date);
         attroff(COLOR_PAIR(color_pair));
     }
 
-    mvprintw(max_y - 1, 0, "q: Quit | Enter: Open | Arrows: Navigate | F3: Analyze | f: Search | F5: Create File | F6: Create Dir | F7: Rename | Ctrl+C: Copy | Ctrl+X: Cut | Ctrl+V: Paste | F8: Delete | s/S: Sort by Name | z/Z: Sort by Size | d/D: Sort by Date | h: Home | /: Root");
+    mvprintw(max_y - 2, 0, "q: Quit | Enter: Open | Arrows: Navigate | F3: Analyze | f: Search | F5: Create File | F6: Create Dir");
+    mvprintw(max_y - 1, 0, "F7: Rename | Ctrl+C: Copy | Ctrl+X: Cut | Ctrl+V: Paste | F8: Delete | s/S: Sort by Name | z/Z: Sort by Size | d/D: Sort by Date");
 }
 
-static void search_draw(AppState *state, const char *search_input) {
+static void search_draw(AppState *state) {
     mvprintw(0, 0, "Directory: %s", state->current_dir ? state->current_dir : "(null)");
 
     attron(COLOR_PAIR(2));
-    mvprintw(1, 0, "Search mode: '%s' (recursive)", search_input ? search_input : "");
+    mvprintw(1, 0, "Search mode: '%s' (recursive)", state->search_input);
     attroff(COLOR_PAIR(2));
 
     unsigned int max_y, max_x;
@@ -222,7 +226,7 @@ static void search_draw(AppState *state, const char *search_input) {
     unsigned int start_y = 3;
 
     // Определяем ширину столбцов
-    const int name_width = 50; // Ширина для имени файла/папки
+    const int name_width = 100; // Ширина для имени файла/папки
     const int size_width = 10; // Ширина для размера
     const int date_width = 20; // Ширина для даты
 
@@ -241,8 +245,9 @@ static void search_draw(AppState *state, const char *search_input) {
     start_y++;
 
     const std::vector<FileInfo> &display_files = state->filtered_files;
-
-    for (size_t i = 0; i < display_files.size() && start_y + i < max_y - 2; i++) {
+    getmaxyx(stdscr, max_y, max_x);
+    size_t visible_rows = max_y - start_y - 2;
+    for (size_t i = state->scroll_y; i < display_files.size() && (i - state->scroll_y) < visible_rows; i++) {
         const FileInfo &file = display_files[i];
         bool is_selected = (static_cast<long long>(i) == state->selected_index);
 
@@ -272,8 +277,8 @@ static void search_draw(AppState *state, const char *search_input) {
             attron(COLOR_PAIR(3));
         }
 
-        // Вывод строки
-        move(start_y + i, 0);
+        // Вывод строки  
+        move(start_y + (i - state->scroll_y), 0);
         addwstr(display_name);
         addwstr(display_size);
         addwstr(display_date);
@@ -292,14 +297,6 @@ static void search_draw(AppState *state, const char *search_input) {
 }
 
 static void analysis_draw(AppState *state) {
-    if (!state || !state->analysis_result) {
-        printf("Error: analysis_draw called with NULL state or result\n");
-        clear();
-        mvprintw(0, 0, "Analysis failed: No results");
-        refresh();
-        return;
-    }
-
     clear();
     unsigned int max_y, max_x;
     getmaxyx(stdscr, max_y, max_x);
@@ -314,57 +311,88 @@ static void analysis_draw(AppState *state) {
         if (dup.paths.size() > 1) total_items += dup.paths.size();
     }
 
-    y++;
-    mvprintw(y++, 0, "Old files:");
-    size_t item_index = 0;
-    for (size_t i = 0; i < state->analysis_result->old_files.size(); i++) {
-        if (y >= max_y - 2) break;
-        bool selected = (state->analysis_result->section == AnalysisResult::SECTION_OLD &&
-                         state->analysis_result->selected_index == item_index);
-        if (selected) attron(COLOR_PAIR(1));
-        mvprintw(y++, 0, "  %s", state->analysis_result->old_files[i].c_str());
-        if (selected) attroff(COLOR_PAIR(1));
-        item_index++;
+    size_t visible_rows = max_y - y - 1; // Учитываем строку подсказки
+    size_t item_index = state->scroll_y;
+    size_t display_y = y;
+
+    // Пропускаем элементы до scroll_y
+    while (item_index < state->scroll_y) {
+        if (item_index < state->analysis_result->old_files.size()) {
+            item_index++;
+        } else if (item_index < state->analysis_result->old_files.size() + state->analysis_result->empty_files.size()) {
+            item_index++;
+        } else if (item_index < state->analysis_result->old_files.size() + state->analysis_result->empty_files.size() + state->analysis_result->empty_dirs.size()) {
+            item_index++;
+        } else {
+            size_t dup_idx = item_index - (state->analysis_result->old_files.size() + state->analysis_result->empty_files.size() + state->analysis_result->empty_dirs.size());
+            for (const auto &dup : state->analysis_result->duplicates) {
+                if (dup.paths.size() > 1) {
+                    if (dup_idx < dup.paths.size()) {
+                        dup_idx = 0;
+                        item_index += dup.paths.size();
+                        break;
+                    }
+                    dup_idx -= dup.paths.size();
+                }
+            }
+        }
     }
 
+    // Отображаем элементы
     y++;
-    mvprintw(y++, 0, "Empty files:");
-    for (size_t i = 0; i < state->analysis_result->empty_files.size(); i++) {
-        if (y >= max_y - 2) break;
-        bool selected = (state->analysis_result->section == AnalysisResult::SECTION_EMPTY_FILES &&
-                         state->analysis_result->selected_index == item_index);
-        if (selected) attron(COLOR_PAIR(1));
-        mvprintw(y++, 0, "  %s", state->analysis_result->empty_files[i].c_str());
-        if (selected) attroff(COLOR_PAIR(1));
-        item_index++;
+    if (item_index < state->analysis_result->old_files.size()) {
+        mvprintw(y++, 0, "Old files:");
+        for (size_t i = item_index; i < state->analysis_result->old_files.size() && display_y < max_y - 1; i++) {
+            bool selected = (state->analysis_result->section == AnalysisResult::SECTION_OLD &&
+                            state->analysis_result->selected_index == item_index);
+            if (selected) attron(COLOR_PAIR(1));
+            mvprintw(display_y++, 0, "  %s", state->analysis_result->old_files[i].c_str());
+            if (selected) attroff(COLOR_PAIR(1));
+            item_index++;
+        }
     }
 
-    y++;
-    mvprintw(y++, 0, "Empty directories:");
-    for (size_t i = 0; i < state->analysis_result->empty_dirs.size(); i++) {
-        if (y >= max_y - 2) break;
-        bool selected = (state->analysis_result->section == AnalysisResult::SECTION_EMPTY_DIRS &&
-                         state->analysis_result->selected_index == item_index);
-        if (selected) attron(COLOR_PAIR(1));
-        mvprintw(y++, 0, "  %s", state->analysis_result->empty_dirs[i].c_str());
-        if (selected) attroff(COLOR_PAIR(1));
-        item_index++;
+    if (item_index < state->analysis_result->old_files.size() + state->analysis_result->empty_files.size()) {
+        mvprintw(y++, 0, "Empty files:");
+        for (size_t i = item_index - state->analysis_result->old_files.size(); i < state->analysis_result->empty_files.size() && display_y < max_y - 1; i++) {
+            bool selected = (state->analysis_result->section == AnalysisResult::SECTION_EMPTY_FILES &&
+                            state->analysis_result->selected_index == item_index);
+            if (selected) attron(COLOR_PAIR(1));
+            mvprintw(display_y++, 0, "  %s", state->analysis_result->empty_files[i].c_str());
+            if (selected) attroff(COLOR_PAIR(1));
+            item_index++;
+        }
     }
 
-    y++;
-    mvprintw(y++, 0, "Duplicate files:");
-    for (const DuplicateInfo &dup : state->analysis_result->duplicates) {
-        if (dup.paths.size() > 1) {
-            if (y >= max_y - 2) break;
-            mvprintw(y++, 0, "  Hash: %s", dup.hash.c_str());
-            for (size_t i = 0; i < dup.paths.size(); i++) {
-                if (y >= max_y - 2) break;
-                bool selected = (state->analysis_result->section == AnalysisResult::SECTION_DUPLICATES &&
-                                 state->analysis_result->selected_index == item_index);
-                if (selected) attron(COLOR_PAIR(1));
-                mvprintw(y++, 0, "    %s", dup.paths[i].c_str());
-                if (selected) attroff(COLOR_PAIR(1));
-                item_index++;
+    if (item_index < state->analysis_result->old_files.size() + state->analysis_result->empty_files.size() + state->analysis_result->empty_dirs.size()) {
+        mvprintw(y++, 0, "Empty directories:");
+        for (size_t i = item_index - (state->analysis_result->old_files.size() + state->analysis_result->empty_files.size()); i < state->analysis_result->empty_dirs.size() && display_y < max_y - 1; i++) {
+            bool selected = (state->analysis_result->section == AnalysisResult::SECTION_EMPTY_DIRS &&
+                            state->analysis_result->selected_index == item_index);
+            if (selected) attron(COLOR_PAIR(1));
+            mvprintw(display_y++, 0, "  %s", state->analysis_result->empty_dirs[i].c_str());
+            if (selected) attroff(COLOR_PAIR(1));
+            item_index++;
+        }
+    }
+
+    if (item_index < total_items) {
+        mvprintw(y++, 0, "Duplicate files:");
+        for (const DuplicateInfo &dup : state->analysis_result->duplicates) {
+            if (dup.paths.size() > 1) {
+                if (display_y < max_y - 1) {
+                    mvprintw(display_y++, 0, "  Hash: %s", dup.hash.c_str());
+                }
+                for (size_t i = (item_index >= state->analysis_result->old_files.size() + state->analysis_result->empty_files.size() + state->analysis_result->empty_dirs.size()) ?
+                    (item_index - (state->analysis_result->old_files.size() + state->analysis_result->empty_files.size() + state->analysis_result->empty_dirs.size())) % dup.paths.size() : 0;
+                    i < dup.paths.size() && display_y < max_y - 1; i++) {
+                    bool selected = (state->analysis_result->section == AnalysisResult::SECTION_DUPLICATES &&
+                                    state->analysis_result->selected_index == item_index);
+                    if (selected) attron(COLOR_PAIR(1));
+                    mvprintw(display_y++, 0, "    %s", dup.paths[i].c_str());
+                    if (selected) attroff(COLOR_PAIR(1));
+                    item_index++;
+                }
             }
         }
     }
@@ -428,13 +456,11 @@ void ui_draw(AppState *state) {
     }
     clear();
 
-    static char search_input[256] = "";
-    static bool search_active = true;
 
     if (state->mode == MODE_BROWSE) {
         browse_draw(state);
     } else if (state->mode == MODE_SEARCH) {
-        search_draw(state, search_input);
+        search_draw(state);
     } else if (state->mode == MODE_EDITOR) {
         editor_draw(state);
     } else if (state->mode == MODE_ANALYSIS) {
@@ -450,13 +476,12 @@ int ui_handle_input(AppState *state) {
         return 0;
     }
 
-    static char search_input[256] = "";
-    static bool search_active = true;
+   
 
     if (state->mode == MODE_BROWSE) {
         return browse_handle_input(state);
     } else if (state->mode == MODE_SEARCH) {
-        return search_handle_input(state, search_input, &search_active);
+        return search_handle_input(state);
     } else if (state->mode == MODE_EDITOR) {
         return editor_handle_input(state);
     } else if (state->mode == MODE_ANALYSIS) {
@@ -542,6 +567,10 @@ typedef struct {
     char *clipboard_path;       // Путь к файлу/папке в буфере обмена
     bool clipboard_is_cut;      // Флаг: true для вырезания, false для копирования
     SortType sort_type;
+    char search_input[256];     // Текущий ввод поискового запроса
+    bool search_active;         // Флаг активности поиска
+    size_t scroll_y;
+    size_t scroll_x; 
 } AppState;
 
 // Функции менеджера состояния
@@ -565,7 +594,7 @@ void state_sort_files(AppState *state);
 #include "editor.h"
 #include "analysis.h"
 #include <unistd.h>
-#include <strings.h> // Для strcasestr
+#include <strings.h> 
 #include <algorithm>
 
 void state_init(AppState *state) {
@@ -583,6 +612,10 @@ void state_init(AppState *state) {
     state->clipboard_path = NULL;
     state->clipboard_is_cut = false;
     state->sort_type = SORT_BY_NAME_ASC;
+    memset(state->search_input, 0, sizeof(state->search_input));
+    state->search_active = true;  
+    state->scroll_y = 0;
+    state->scroll_x = 0; 
     state_load_files(state);
 }
 
@@ -693,6 +726,8 @@ void state_load_files(AppState *state) {
 
     fs_get_files(state->current_dir, state->files);
     state_sort_files(state); // Добавляем сортировку
+    state->scroll_y = 0;
+    state->scroll_x = 0;
 }
 
 void state_filter_files(AppState *state, const char *query) {
@@ -721,6 +756,8 @@ void state_filter_files(AppState *state, const char *query) {
     fs_search_recursive(state->current_dir, query, state->filtered_files);
     state_sort_files(state); // Добавляем сортировку
     state->selected_index = state->filtered_files.size() > 0 ? 0 : 0;
+    state->scroll_y = 0;
+    state->scroll_x = 0;
 }
 
 void state_select_index(AppState *state, unsigned int index) {
@@ -923,7 +960,7 @@ static void editor_save_file(EditorState *editor, const char *filename) {
 
 // Обработчики ввода для каждого режима
 int browse_handle_input(AppState *state);
-int search_handle_input(AppState *state, char *search_input, bool *search_active);
+int search_handle_input(AppState *state);
 int analysis_handle_input(AppState *state);
 int editor_handle_input(AppState *state);
 
@@ -958,15 +995,6 @@ int browse_handle_input(AppState *state) {
         case 'q':
             quit = true;
             return 0;
-        case KEY_UP:
-            state_select_index(state, state->selected_index > 0 ? state->selected_index - 1 : 0);
-            break;
-        case KEY_DOWN:
-        {
-            long long max_index = state->filtered_files.size() > 0 ? state->filtered_files.size() - 1 : state->files.size() - 1;
-            state_select_index(state, state->selected_index + 1 <= max_index ? state->selected_index + 1 : max_index);
-        }
-            break;
         case '\n':
         {
             const std::vector<FileInfo> &display_files = state->filtered_files.size() > 0 ? state->filtered_files : state->files;
@@ -1008,6 +1036,33 @@ int browse_handle_input(AppState *state) {
             }
         }
         break;
+    case KEY_BACKSPACE:
+        {
+            // Проверяем, что мы не в корневой директории
+            if (strcmp(state->current_dir, "/") != 0) {
+                // Формируем путь к родительской директории
+                char parent_dir[PATH_MAX];
+                strncpy(parent_dir, state->current_dir, PATH_MAX);
+                parent_dir[PATH_MAX - 1] = '\0';
+
+                // Находим последний слэш
+                char *last_slash = strrchr(parent_dir, '/');
+                if (last_slash && last_slash != parent_dir) {
+                    *last_slash = '\0'; // Обрезаем до родительской директории
+                } else {
+                    strcpy(parent_dir, "/"); // Если это корень, остаёмся в нём
+                }
+
+                // Переходим в родительскую директорию
+                state_set_current_dir(state, parent_dir);
+                state_load_files(state); // Обновляем список файлов
+                state->selected_index = 0; // Сбрасываем выбор
+                state->scroll_y = 0; // Сбрасываем вертикальную прокрутку
+                state->scroll_x = 0; // Сбрасываем горизонтальную прокрутку (если добавлена)
+                ui_draw(state); // Обновляем экран
+            }
+        }
+            break;
         case 'f': // Активация поиска
             state->mode = MODE_SEARCH;
             state_filter_files(state, "");
@@ -1128,8 +1183,9 @@ int browse_handle_input(AppState *state) {
                 unsigned int max_y, max_x;
                 getmaxyx(stdscr, max_y, max_x);
                 long long display_file_count = state->filtered_files.size() > 0 ? state->filtered_files.size() : state->files.size();
-                if (event.y >= 2 && static_cast<long long>(event.y) < 2 + display_file_count && event.y < max_y - 1) {
-                    state_select_index(state, event.y - 2);
+                const unsigned int start_y = 3; 
+                if (event.y >= start_y && static_cast<long long>(event.y) < start_y + display_file_count && event.y < max_y - 2) {
+                    state_select_index(state, event.y - start_y);
                     if (event.bstate & BUTTON1_CLICKED) {
                         const std::vector<FileInfo> &display_files = state->filtered_files.size() > 0 ? state->filtered_files : state->files;
                         if (display_files[state->selected_index].is_dir) {
@@ -1141,6 +1197,31 @@ int browse_handle_input(AppState *state) {
                     }
                 }
             }
+            break;
+        case KEY_UP:
+            if (state->selected_index > 0) {
+                state->selected_index--;
+                unsigned int max_y, max_x;
+                getmaxyx(stdscr, max_y, max_x);
+                size_t visible_rows = max_y - 3 - 2; // start_y = 3, 2 строки подсказки
+                if (state->selected_index < state->scroll_y) {
+                    state->scroll_y--;
+                }
+            }
+            break;
+        case KEY_DOWN:
+        {
+            long long max_index = state->filtered_files.size() > 0 ? state->filtered_files.size() - 1 : state->files.size() - 1;
+            if (state->selected_index < max_index) {
+                state->selected_index++;
+                unsigned int max_y, max_x;
+                getmaxyx(stdscr, max_y, max_x);
+                size_t visible_rows = max_y - 3 - 2; // start_y = 3, 2 строки подсказки
+                if (state->selected_index >= state->scroll_y + visible_rows) {
+                    state->scroll_y++;
+                }
+            }
+        }
             break;
         case 27: // Esc
             state_filter_files(state, NULL);
@@ -1175,33 +1256,53 @@ int browse_handle_input(AppState *state) {
     return 1;
 }
 
-int search_handle_input(AppState *state, char *search_input, bool *search_active) {
-    if (!state || !search_input || !search_active) {
-        fprintf(stderr, "Error: search_handle_input called with NULL arguments\n");
-        return 0;
-    }
-
+int search_handle_input(AppState *state) {
+   
     int ch = getch();
     if (ch == 'q') { // Выход по q
         return 0;
+    }else if (ch == KEY_UP) {
+        if (state->selected_index > 0) {
+            state->selected_index--;
+            unsigned int max_y, max_x;
+            getmaxyx(stdscr, max_y, max_x);
+            size_t visible_rows = max_y - 3 - 2; // start_y = 3, строка ввода + подсказка
+            if (state->selected_index < state->scroll_y) {
+                state->scroll_y--;
+            }
+        }
+        ui_draw(state);
+    } else if (ch == KEY_DOWN) {
+        long long max_index = state->filtered_files.size() - 1;
+        if (state->selected_index < max_index) {
+            state->selected_index++;
+            unsigned int max_y, max_x;
+            getmaxyx(stdscr, max_y, max_x);
+            size_t visible_rows = max_y - 3 - 2; // start_y = 3, строка ввода + подсказка
+            if (state->selected_index >= state->scroll_y + visible_rows) {
+                state->scroll_y++;
+            }
+        }
+        ui_draw(state);
     } else if (ch == 27) { // Esc
-        search_input[0] = '\0';
-        *search_active = false;
+        state->search_input[0] = '\0';
+        state->search_active = false;
         state_filter_files(state, NULL);
         state->mode = MODE_BROWSE;
     } else if (ch == '\n') {
-        state_filter_files(state, search_input);
-        search_input[0] = '\0';
-        *search_active = false;
+        state_filter_files(state, state->search_input);
+        state->search_input[0] = '\0';
+        state->search_active = false;
         state->mode = MODE_BROWSE;
-    } else if (ch == KEY_BACKSPACE && strlen(search_input) > 0) {
-        search_input[strlen(search_input) - 1] = '\0';
-        state_filter_files(state, search_input);
+    } else if (ch == KEY_BACKSPACE && strlen(state->search_input) > 0) {
+        state->search_input[strlen(state->search_input) - 1] = '\0';
+        state_filter_files(state, state->search_input);
         ui_draw(state);
-    } else if (ch >= 32 && ch <= 126 && strlen(search_input) < 256 - 1) {
-        search_input[strlen(search_input)] = static_cast<char>(ch);
-        search_input[strlen(search_input)] = '\0';
-        state_filter_files(state, search_input);
+    } else if (ch >= 32 && ch <= 126 && strlen(state->search_input) < 256 - 1) {
+        size_t len = strlen(state->search_input);
+        state->search_input[len] = static_cast<char>(ch);
+        state->search_input[len + 1] = '\0';
+        state_filter_files(state, state->search_input);
         ui_draw(state);
     }
     return 1;
@@ -1231,13 +1332,19 @@ int analysis_handle_input(AppState *state) {
         case KEY_UP:
             if (result->selected_index > 0) {
                 result->selected_index--;
+                unsigned int max_y, max_x;
+                getmaxyx(stdscr, max_y, max_x);
+                size_t visible_rows = max_y - 2 - 1; // y=2 после заголовка, 1 строка подсказки
+                if (result->selected_index < state->scroll_y) {
+                    state->scroll_y--;
+                }
                 // Обновляем секцию
-                size_t idx = 0;
-                if (result->selected_index < result->old_files.size()) {
+                size_t idx = result->selected_index;
+                if (idx < result->old_files.size()) {
                     result->section = AnalysisResult::SECTION_OLD;
-                } else if (result->selected_index < result->old_files.size() + result->empty_files.size()) {
+                } else if (idx < result->old_files.size() + result->empty_files.size()) {
                     result->section = AnalysisResult::SECTION_EMPTY_FILES;
-                } else if (result->selected_index < result->old_files.size() + result->empty_files.size() + result->empty_dirs.size()) {
+                } else if (idx < result->old_files.size() + result->empty_files.size() + result->empty_dirs.size()) {
                     result->section = AnalysisResult::SECTION_EMPTY_DIRS;
                 } else {
                     result->section = AnalysisResult::SECTION_DUPLICATES;
@@ -1247,13 +1354,19 @@ int analysis_handle_input(AppState *state) {
         case KEY_DOWN:
             if (result->selected_index + 1 < total_items) {
                 result->selected_index++;
+                unsigned int max_y, max_x;
+                getmaxyx(stdscr, max_y, max_x);
+                size_t visible_rows = max_y - 2 - 1; // y=2 после заголовка, 1 строка подсказки
+                if (result->selected_index >= state->scroll_y + visible_rows) {
+                    state->scroll_y++;
+                }
                 // Обновляем секцию
-                size_t idx = 0;
-                if (result->selected_index < result->old_files.size()) {
+                size_t idx = result->selected_index;
+                if (idx < result->old_files.size()) {
                     result->section = AnalysisResult::SECTION_OLD;
-                } else if (result->selected_index < result->old_files.size() + result->empty_files.size()) {
+                } else if (idx < result->old_files.size() + result->empty_files.size()) {
                     result->section = AnalysisResult::SECTION_EMPTY_FILES;
-                } else if (result->selected_index < result->old_files.size() + result->empty_files.size() + result->empty_dirs.size()) {
+                } else if (idx < result->old_files.size() + result->empty_files.size() + result->empty_dirs.size()) {
                     result->section = AnalysisResult::SECTION_EMPTY_DIRS;
                 } else {
                     result->section = AnalysisResult::SECTION_DUPLICATES;

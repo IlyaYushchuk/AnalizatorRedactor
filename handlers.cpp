@@ -251,6 +251,21 @@ int browse_handle_input(AppState *state) {
                 }
             }
         }
+            break;  
+        case 9: // Ctrl+I
+        {
+            const std::vector<FileInfo> &display_files = state->filtered_files.size() > 0 ? state->filtered_files : state->files;
+            if (state->selected_index < static_cast<long long>(display_files.size())) {
+                const FileInfo &file = display_files[state->selected_index];
+                // Формируем полный путь
+                char full_path[PATH_MAX];
+                snprintf(full_path, sizeof(full_path), "%s/%s", state->current_dir, file.name);
+                // Получаем метаданные
+                Metadata meta = analysis_get_metadata(full_path);
+                // Отображаем метаданные
+                ui_show_metadata(state, meta);
+            }
+        }
             break;
         case 27: // Esc
             state_filter_files(state, NULL);

@@ -8,6 +8,63 @@
 #include <string.h>
 #include <time.h>
 #include <string>
+#include <limits.h>
+
+
+
+// Функция для отображения метаданных
+void ui_show_metadata(AppState *state, const Metadata &meta) {
+    if (!state) {
+        fprintf(stderr, "Error: ui_show_metadata called with NULL state\n");
+        return;
+    }
+
+    // Создаём новое окно
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+    int win_height = 15; // Высота окна
+    int win_width = 60;  // Ширина окна
+    int start_y = (max_y - win_height) / 2;
+    int start_x = (max_x - win_width) / 2;
+
+    WINDOW *meta_win = newwin(win_height, win_width, start_y, start_x);
+    if (!meta_win) {
+        fprintf(stderr, "Failed to create metadata window\n");
+        return;
+    }
+
+    // Включаем рамку и фон
+    box(meta_win, 0, 0);
+    wbkgd(meta_win, COLOR_PAIR(3)); // Используем стандартную цветовую пару
+
+    // Отображаем метаданные
+    mvwprintw(meta_win, 1, 2, "Metadata for: %s", meta.name.c_str());
+    mvwprintw(meta_win, 2, 2, "Type: %s", meta.is_dir ? "Directory" : "File");
+    mvwprintw(meta_win, 3, 2, "Size: %lld bytes", meta.size);
+    mvwprintw(meta_win, 4, 2, "Last Modified: %s", meta.mtime.c_str());
+    mvwprintw(meta_win, 5, 2, "Last Accessed: %s", meta.atime.c_str());
+    mvwprintw(meta_win, 6, 2, "Status Changed: %s", meta.ctime.c_str());
+    mvwprintw(meta_win, 7, 2, "Permissions: %s", meta.permissions.c_str());
+    mvwprintw(meta_win, 8, 2, "Owner: %s", meta.owner.c_str());
+    mvwprintw(meta_win, 9, 2, "Group: %s", meta.group.c_str());
+    mvwprintw(meta_win, 10, 2, "Inode: %ld", meta.inode);
+
+    // Подсказка для закрытия окна
+    mvwprintw(meta_win, win_height - 2, 2, "Press any key to close");
+
+    // Обновляем окно
+    wrefresh(meta_win);
+
+    // Ожидаем нажатие любой клавиши
+    getch();
+
+    // Удаляем окно
+    delwin(meta_win);
+
+    // Перерисовываем основной экран
+    touchwin(stdscr);
+    ui_draw(state);
+}
 
 // Подсчитывает видимую ширину строки UTF-8
 static int get_display_width(const char *str) {

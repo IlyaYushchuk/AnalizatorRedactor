@@ -58,6 +58,20 @@ typedef struct {
     enum { SECTION_OLD, SECTION_EMPTY_FILES, SECTION_EMPTY_DIRS, SECTION_DUPLICATES } section; // Текущий раздел
 } AnalysisResult;
 
+// Структура для хранения метаданных файла/папки
+typedef struct {
+    std::string name;          // Имя файла/папки
+    bool is_dir;               // Является ли директорией
+    long long size;            // Размер в байтах
+    std::string mtime;         // Время последнего изменения
+    std::string atime;         // Время последнего доступа
+    std::string ctime;         // Время изменения статуса
+    std::string permissions;   // Права доступа (например, -rwxr-xr-x)
+    std::string owner;         // Имя владельца
+    std::string group;         // Имя группы
+    long inode;                // Номер инода
+} Metadata;
+
 // Структура состояния приложения
 typedef struct {
     AppMode mode;               // Текущий режим
