@@ -222,7 +222,7 @@ static void browse_draw(AppState *state) {
         attroff(COLOR_PAIR(color_pair));
     }
 
-    mvprintw(max_y - 2, 0, "q: Quit | Enter: Open | Arrows: Navigate | F3: Analyze | f: Search | F5: Create File | F6: Create Dir");
+    mvprintw(max_y - 2, 0, "Ctrl+Q: Quit | Enter: Open | Arrows: Navigate | F3: Analyze | Ctrl+F: Search | F5: Create File | F6: Create Dir");
     mvprintw(max_y - 1, 0, "F7: Rename | Ctrl+C: Copy | Ctrl+X: Cut | Ctrl+V: Paste | F8: Delete | s/S: Sort by Name | z/Z: Sort by Size | d/D: Sort by Date");
 }
 
@@ -305,7 +305,7 @@ static void search_draw(AppState *state) {
         }
     }
 
-    mvprintw(max_y - 1, 0, "q: Quit | Esc: Back | Enter: End Search | Backspace: Edit Query");
+    mvprintw(max_y - 1, 0, "Ctrl+Q: Quit | Esc: Back | Enter: End Search | Backspace: Edit Query");
 }
 
 static void analysis_draw(AppState *state) {
@@ -409,7 +409,7 @@ static void analysis_draw(AppState *state) {
         }
     }
 
-    mvprintw(max_y - 1, 0, "q: Quit | Esc: Back | Arrows: Navigate | Enter: Open | F4: Delete");
+    mvprintw(max_y - 1, 0, "Ctrl+F: Quit | Esc: Back | Arrows: Navigate | Enter: Open | F4: Delete");
     refresh();
 }
 
