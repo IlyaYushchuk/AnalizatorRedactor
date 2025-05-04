@@ -65,6 +65,33 @@ int browse_handle_input(AppState *state) {
             }
         }
         break;
+    case KEY_BACKSPACE:
+        {
+            // Проверяем, что мы не в корневой директории
+            if (strcmp(state->current_dir, "/") != 0) {
+                // Формируем путь к родительской директории
+                char parent_dir[PATH_MAX];
+                strncpy(parent_dir, state->current_dir, PATH_MAX);
+                parent_dir[PATH_MAX - 1] = '\0';
+
+                // Находим последний слэш
+                char *last_slash = strrchr(parent_dir, '/');
+                if (last_slash && last_slash != parent_dir) {
+                    *last_slash = '\0'; // Обрезаем до родительской директории
+                } else {
+                    strcpy(parent_dir, "/"); // Если это корень, остаёмся в нём
+                }
+
+                // Переходим в родительскую директорию
+                state_set_current_dir(state, parent_dir);
+                state_load_files(state); // Обновляем список файлов
+                state->selected_index = 0; // Сбрасываем выбор
+                state->scroll_y = 0; // Сбрасываем вертикальную прокрутку
+                state->scroll_x = 0; // Сбрасываем горизонтальную прокрутку (если добавлена)
+                ui_draw(state); // Обновляем экран
+            }
+        }
+            break;
         case 'f': // Активация поиска
             state->mode = MODE_SEARCH;
             state_filter_files(state, "");

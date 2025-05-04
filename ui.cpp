@@ -74,7 +74,8 @@ void ui_init() {
     keypad(stdscr, TRUE);
     mousemask(ALL_MOUSE_EVENTS | REPORT_MOUSE_POSITION, NULL);
 
-    init_pair(1, COLOR_GREEN, COLOR_BLACK);  // Выделенный элемент
+    bkgd(COLOR_PAIR(3)); // Устанавливает фон всего окна
+    init_pair(1, COLOR_BLACK, COLOR_WHITE);  // Выделенный элемент
     init_pair(2, COLOR_YELLOW, COLOR_BLACK); // Директории
     init_pair(3, COLOR_WHITE, COLOR_BLACK);   // Обычные файлы
     init_pair(4, COLOR_CYAN, COLOR_BLACK);   // Исполняемые файлы
@@ -180,7 +181,7 @@ static void search_draw(AppState *state) {
     unsigned int start_y = 3;
 
     // Определяем ширину столбцов
-    const int name_width = 50; // Ширина для имени файла/папки
+    const int name_width = 100; // Ширина для имени файла/папки
     const int size_width = 10; // Ширина для размера
     const int date_width = 20; // Ширина для даты
 

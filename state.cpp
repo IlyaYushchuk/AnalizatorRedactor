@@ -3,7 +3,7 @@
 #include "editor.h"
 #include "analysis.h"
 #include <unistd.h>
-#include <strings.h> // Для strcasestr
+#include <strings.h> 
 #include <algorithm>
 
 void state_init(AppState *state) {
@@ -24,6 +24,7 @@ void state_init(AppState *state) {
     memset(state->search_input, 0, sizeof(state->search_input));
     state->search_active = true;  
     state->scroll_y = 0;
+    state->scroll_x = 0; 
     state_load_files(state);
 }
 
@@ -135,6 +136,7 @@ void state_load_files(AppState *state) {
     fs_get_files(state->current_dir, state->files);
     state_sort_files(state); // Добавляем сортировку
     state->scroll_y = 0;
+    state->scroll_x = 0;
 }
 
 void state_filter_files(AppState *state, const char *query) {
@@ -164,6 +166,7 @@ void state_filter_files(AppState *state, const char *query) {
     state_sort_files(state); // Добавляем сортировку
     state->selected_index = state->filtered_files.size() > 0 ? 0 : 0;
     state->scroll_y = 0;
+    state->scroll_x = 0;
 }
 
 void state_select_index(AppState *state, unsigned int index) {
