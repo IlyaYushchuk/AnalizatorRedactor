@@ -329,7 +329,10 @@ int browse_handle_input(AppState *state) {
 
 int search_handle_input(AppState *state) {
    
-    int ch = getch();
+    wint_t ch;
+    if (wget_wch(stdscr, &ch) == ERR) {
+        return 1;
+    }
     if (ch == 17) { // Выход по Ctrl + Q
         return 0;
     }else if (ch == KEY_UP) {
@@ -365,7 +368,8 @@ int search_handle_input(AppState *state) {
         state->search_input[0] = '\0';
         state->search_active = false;
         state->mode = MODE_BROWSE;
-    } else if (ch == KEY_BACKSPACE && strlen(state->search_input) > 0) {
+     } else if (ch == KEY_BACKSPACE && strlen(state->search_input) > 0) {
+        // Удаляем последний UTF-8 символ
         size_t len = strlen(state->search_input);
         size_t pos = len;
         while (pos > 0 && (state->search_input[pos - 1] & 0xC0) == 0x80) {
@@ -376,40 +380,14 @@ int search_handle_input(AppState *state) {
             state_filter_files(state, state->search_input);
             ui_draw(state);
         }
-    } else if (ch >= 32 && ch <= 126 && strlen(state->search_input) < 256 - 1) {
-        // Обрабатываем многобайтовый ввод
-        char buf[4] = {0}; // Достаточно для одного UTF-8 символа (максимум 4 байта)
-        buf[0] = static_cast<char>(ch);
-        size_t len = strlen(state->search_input);
-        if (len < 256 - 4) { // Учитываем, что символ может быть до 4 байт
-            // Проверяем, является ли ch началом UTF-8 символа
-            if ((ch & 0xC0) != 0x80) { // Не продолжительный байт
-                size_t bytes = 1;
-                if ((ch & 0xE0) == 0xC0) bytes = 2; // 2-байтовый символ
-                else if ((ch & 0xF0) == 0xE0) bytes = 3; // 3-байтовый символ
-                else if ((ch & 0xF8) == 0xF0) bytes = 4; // 4-байтовый символ
-
-                if (bytes == 1) {
-                    // Однобайтовый символ
-                    state->search_input[len] = ch;
-                    state->search_input[len + 1] = '\0';
-                } else {
-                    // Многобайтовый символ
-                    state->search_input[len] = ch;
-                    for (size_t i = 1; i < bytes; i++) {
-                        ch = wgetch(stdscr);
-                        if (ch == ERR || (ch & 0xC0) != 0x80) {
-                            // Некорректный UTF-8, отменяем
-                            state->search_input[len] = '\0';
-                            break;
-                        }
-                        state->search_input[len + i] = ch;
-                    }
-                    state->search_input[len + bytes] = '\0';
-                }
-                state_filter_files(state, state->search_input);
-                ui_draw(state);
-            }
+    } else if (ch >= 32) { // Печатные символы
+        // Преобразуем широкий символ в UTF-8
+        char buf[MB_CUR_MAX];
+        int len = wctomb(buf, static_cast<wchar_t>(ch));
+        if (len > 0 && strlen(state->search_input) + len < sizeof(state->search_input) - 1) {
+            strncat(state->search_input, buf, len);
+            state_filter_files(state, state->search_input);
+            ui_draw(state);
         }
     }
     return 1;

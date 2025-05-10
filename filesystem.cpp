@@ -10,6 +10,36 @@
 #include <strings.h> 
 #include <cwctype>   
 #include <wctype.h>
+#include <algorithm>
+
+// Вспомогательная функция для преобразования UTF-8 строки в нижний регистр
+static std::wstring to_lower_wstring(const std::string &input) {
+    std::wstring result;
+    mbstate_t mbs = {};
+    const char *p = input.c_str();
+    size_t len = mbsrtowcs(nullptr, &p, 0, &mbs);
+    if (len == (size_t)-1) return result;
+
+    result.resize(len);
+    mbsrtowcs(&result[0], &p, len, &mbs);
+
+    std::transform(result.begin(), result.end(), result.begin(), towlower);
+    return result;
+}
+
+// Вспомогательная функция для преобразования UTF-8 строки в std::wstring
+static std::wstring utf8_to_wstring(const std::string &input) {
+    std::wstring result;
+    mbstate_t mbs = {};
+    const char *p = input.c_str();
+    size_t len = mbsrtowcs(nullptr, &p, 0, &mbs);
+    if (len == (size_t)-1) return result;
+
+    result.resize(len);
+    mbsrtowcs(&result[0], &p, len, &mbs);
+    return result;
+}
+
 
 void add_parent_dir_entry(std::vector<FileInfo> &files, const char *path) {
     // Проверяем, не корневая ли директория
@@ -75,8 +105,15 @@ void fs_search_recursive(const char *base_path, const char *query, std::vector<F
         return;
     }
 
+    // Преобразуем запрос в нижний регистр в виде wstring
+    std::wstring wquery = to_lower_wstring(query);
+    if (wquery.empty()) return;
+
     DIR *dir = opendir(base_path);
-    if (!dir) return;
+    if (!dir) {
+        fprintf(stderr, "Failed to open directory: %s\n", base_path);
+        return;
+    }
 
     struct dirent *entry;
     struct stat st;
@@ -97,17 +134,12 @@ void fs_search_recursive(const char *base_path, const char *query, std::vector<F
             continue;
         }
 
-        // Преобразуем строки в широкие символы для корректного сравнения
-        wchar_t wname[PATH_MAX];
-        wchar_t wquery[PATH_MAX];
-        mbstowcs(wname, entry->d_name, PATH_MAX);
-        mbstowcs(wquery, query, PATH_MAX);
+        // Преобразуем имя файла в нижний регистр в виде wstring
+        std::wstring wname = to_lower_wstring(entry->d_name);
+        if (wname.empty()) continue;
 
-        // Приводим к нижнему регистру для регистронезависимого сравнения
-        for (size_t i = 0; wname[i]; i++) wname[i] = towlower(wname[i]);
-        for (size_t i = 0; wquery[i]; i++) wquery[i] = towlower(wquery[i]);
-
-        if (wcsstr(wname, wquery)) {
+        // Проверяем, содержит ли имя файла запрос
+        if (wname.find(wquery) != std::wstring::npos) {
             FileInfo file;
             file.name = strdup(full_path); // Сохраняем полный путь
             if (!file.name) {
@@ -123,6 +155,7 @@ void fs_search_recursive(const char *base_path, const char *query, std::vector<F
 
     closedir(dir);
 }
+
 
 void fs_open_dir(AppState *state, const char *dir_name) {
     if (!state || !dir_name) {
