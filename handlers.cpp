@@ -368,17 +368,19 @@ int search_handle_input(AppState *state) {
         state->search_input[0] = '\0';
         state->search_active = false;
         state->mode = MODE_BROWSE;
-     } else if (ch == KEY_BACKSPACE && strlen(state->search_input) > 0) {
-        // Удаляем последний UTF-8 символ
-        size_t len = strlen(state->search_input);
-        size_t pos = len;
-        while (pos > 0 && (state->search_input[pos - 1] & 0xC0) == 0x80) {
-            pos--;
-        }
-        if (pos > 0) {
-            state->search_input[pos - 1] = '\0';
-            state_filter_files(state, state->search_input);
-            ui_draw(state);
+    } else if (ch == KEY_BACKSPACE) {
+        if (strlen(state->search_input) > 0) {
+            // Удаляем последний UTF-8 символ
+            size_t len = strlen(state->search_input);
+            size_t pos = len;
+            while (pos > 0 && (state->search_input[pos - 1] & 0xC0) == 0x80) {
+                pos--;
+            }
+            if (pos > 0) {
+                state->search_input[pos - 1] = '\0';
+                state_filter_files(state, state->search_input);
+                ui_draw(state);
+            }
         }
     } else if (ch >= 32) { // Печатные символы
         // Преобразуем широкий символ в UTF-8

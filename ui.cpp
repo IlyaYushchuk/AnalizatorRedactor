@@ -515,7 +515,7 @@ static void search_draw(AppState *state) {
         wchar_t display_date[30];
 
         // Для результатов поиска показываем только имя файла
-        const char *display_name_str = file.name ? strrchr(file.name, '/') ? strrchr(file.name, '/') + 1 : file.name : "(null)";
+        const char *display_name_str = file.name ? file.name : "(null)";
         truncate_to_width(display_name_str, display_name, name_width, 100);
         truncate_to_width(size_str, display_size, size_width, 20);
         truncate_to_width(time_str, display_date, date_width, 30);
