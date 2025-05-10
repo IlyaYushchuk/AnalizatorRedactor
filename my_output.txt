@@ -267,7 +267,7 @@ static void browse_draw(AppState *state) {
         attroff(COLOR_PAIR(color_pair));
     }
 
-    mvprintw(max_y - 2, 0, "q: Quit | Enter: Open | Arrows: Navigate | F3: Analyze | f: Search | F5: Create File | F6: Create Dir");
+    mvprintw(max_y - 2, 0, "Ctrl+Q: Quit | Enter: Open | Arrows: Navigate | F3: Analyze | Ctrl+F: Search | F5: Create File | F6: Create Dir");
     mvprintw(max_y - 1, 0, "F7: Rename | Ctrl+C: Copy | Ctrl+X: Cut | Ctrl+V: Paste | F8: Delete | s/S: Sort by Name | z/Z: Sort by Size | d/D: Sort by Date");
 }
 
@@ -350,7 +350,7 @@ static void search_draw(AppState *state) {
         }
     }
 
-    mvprintw(max_y - 1, 0, "q: Quit | Esc: Back | Enter: End Search | Backspace: Edit Query");
+    mvprintw(max_y - 1, 0, "Ctrl+Q: Quit | Esc: Back | Enter: End Search | Backspace: Edit Query");
 }
 
 static void analysis_draw(AppState *state) {
@@ -454,7 +454,7 @@ static void analysis_draw(AppState *state) {
         }
     }
 
-    mvprintw(max_y - 1, 0, "q: Quit | Esc: Back | Arrows: Navigate | Enter: Open | F4: Delete");
+    mvprintw(max_y - 1, 0, "Ctrl+F: Quit | Esc: Back | Arrows: Navigate | Enter: Open | F4: Delete");
     refresh();
 }
 
@@ -1063,7 +1063,7 @@ int browse_handle_input(AppState *state) {
     MEVENT event;
     bool quit = false;
     switch (ch) {
-        case 'q':
+        case 17: // Ctrl+Q
             quit = true;
             return 0;
         case '\n':
@@ -1134,7 +1134,7 @@ int browse_handle_input(AppState *state) {
             }
         }
             break;
-        case 'f': // Активация поиска
+        case 6: // Ctrl+F Поиск
             state->mode = MODE_SEARCH;
             state_filter_files(state, "");
             break;
@@ -1345,7 +1345,7 @@ int browse_handle_input(AppState *state) {
 int search_handle_input(AppState *state) {
    
     int ch = getch();
-    if (ch == 'q') { // Выход по q
+    if (ch == 17) { // Выход по Ctrl + Q
         return 0;
     }else if (ch == KEY_UP) {
         if (state->selected_index > 0) {
@@ -1409,7 +1409,7 @@ int analysis_handle_input(AppState *state) {
     }
 
     switch (ch) {
-        case 'q':
+        case 17:
             return 0;
         case 27: // Esc
             state->mode = MODE_BROWSE;
@@ -1586,7 +1586,7 @@ int editor_handle_input(AppState *state) {
     getmaxyx(stdscr, max_y, max_x);
 
     switch (ch) {
-       case 'q': // выход
+       case 17: // выход
             if (editor->is_modified) {
                 clear();
                 mvprintw(0, 0, "You have unsaved changes. Exit without saving? (y/n)");

@@ -159,15 +159,46 @@ int browse_handle_input(AppState *state) {
             const std::vector<FileInfo> &display_files = state->filtered_files.size() > 0 ? state->filtered_files : state->files;
             if (state->selected_index < static_cast<long long>(display_files.size())) {
                 clear();
-                mvprintw(0, 0, "Enter new name for %s: ", display_files[state->selected_index].name);
-                refresh();
-                echo();
-                char new_name[256] = "";
-                getnstr(new_name, sizeof(new_name) - 1);
-                noecho();
-                if (strlen(new_name) > 0) {
-                    fs_rename(state, display_files[state->selected_index].name, new_name);
+                std::wstring new_name_wstr; // Используем wstring для хранения широких символов
+                bool input_active = true;
+
+                while (input_active) {
+                    // Конвертируем wstring в UTF-8 для отображения
+                    std::string new_name_utf8;
+                    char buf[MB_CUR_MAX];
+                    for (wchar_t wch : new_name_wstr) {
+                        int len = wctomb(buf, wch);
+                        if (len > 0) new_name_utf8.append(buf, len);
+                    }
+                    mvprintw(0, 0, "Enter new name for %s: %s", display_files[state->selected_index].name, new_name_utf8.c_str());
+                    clrtoeol();
+                    refresh();
+
+                    wint_t ch;
+                    int ret = wget_wch(stdscr, &ch);
+                    if (ret == ERR) continue;
+
+                    if (ch == '\n') { // Enter - завершить ввод
+                        if (!new_name_wstr.empty()) {
+                            // Конвертируем wstring в UTF-8 для fs_rename
+                            std::string new_name_final;
+                            for (wchar_t wch : new_name_wstr) {
+                                int len = wctomb(buf, wch);
+                                if (len > 0) new_name_final.append(buf, len);
+                            }
+                            fs_rename(state, display_files[state->selected_index].name, new_name_final.c_str());
+                        }
+                        input_active = false;
+                    } else if (ch == 27) { // Esc - отменить
+                        input_active = false;
+                    } else if (ch == KEY_BACKSPACE && !new_name_wstr.empty()) { // Backspace - удалить символ
+                        new_name_wstr.pop_back();
+                    } else if (ret == OK && new_name_wstr.size() < 255) { // Печатные символы
+                        new_name_wstr.push_back(static_cast<wchar_t>(ch));
+                    }
                 }
+                clear();
+                ui_draw(state);
             }
         }
             break;
