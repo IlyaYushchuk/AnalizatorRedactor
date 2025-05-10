@@ -130,12 +130,45 @@ int browse_handle_input(AppState *state) {
         {
             clear();
             mvprintw(0, 0, "Enter new file name: ");
-            refresh();
-            echo();
             char filename[256] = "";
-            getnstr(filename, sizeof(filename) - 1);
-            noecho();
-            if (strlen(filename) > 0) {
+            size_t len = 0;
+            int ch;
+            while ((ch = getch()) != '\n' && len < sizeof(filename) - 4) {
+                if (ch == KEY_BACKSPACE && len > 0) {
+                    // Удаляем последний UTF-8 символ
+                    while (len > 0 && (filename[len - 1] & 0xC0) == 0x80) {
+                        filename[--len] = '\0';
+                    }
+                    if (len > 0) {
+                        filename[--len] = '\0';
+                    }
+                    clear();
+                    mvprintw(0, 0, "Enter new file name: %s", filename);
+                    refresh();
+                } else if ((ch & 0xC0) != 0x80) { // Начало UTF-8 символа
+                    size_t bytes = 1;
+                    if ((ch & 0xE0) == 0xC0) bytes = 2;
+                    else if ((ch & 0xF0) == 0xE0) bytes = 3;
+                    else if ((ch & 0xF8) == 0xF0) bytes = 4;
+
+                    if (len + bytes < sizeof(filename)) {
+                        filename[len++] = ch;
+                        for (size_t i = 1; i < bytes; i++) {
+                            ch = wgetch(stdscr);
+                            if (ch == ERR || (ch & 0xC0) != 0x80) {
+                                filename[len] = '\0';
+                                break;
+                            }
+                            filename[len++] = ch;
+                        }
+                        filename[len] = '\0';
+                        clear();
+                        mvprintw(0, 0, "Enter new file name: %s", filename);
+                        refresh();
+                    }
+                }
+            }
+            if (len > 0) {
                 fs_create_file(state, filename);
             }
         }
@@ -144,12 +177,45 @@ int browse_handle_input(AppState *state) {
         {
             clear();
             mvprintw(0, 0, "Enter new directory name: ");
-            refresh();
-            echo();
             char dirname[256] = "";
-            getnstr(dirname, sizeof(dirname) - 1);
-            noecho();
-            if (strlen(dirname) > 0) {
+            size_t len = 0;
+            int ch;
+            while ((ch = getch()) != '\n' && len < sizeof(dirname) - 4) {
+                if (ch == KEY_BACKSPACE && len > 0) {
+                    // Удаляем последний UTF-8 символ
+                    while (len > 0 && (dirname[len - 1] & 0xC0) == 0x80) {
+                        dirname[--len] = '\0';
+                    }
+                    if (len > 0) {
+                        dirname[--len] = '\0';
+                    }
+                    clear();
+                    mvprintw(0, 0, "Enter new directory name: %s", dirname);
+                    refresh();
+                } else if ((ch & 0xC0) != 0x80) { // Начало UTF-8 символа
+                    size_t bytes = 1;
+                    if ((ch & 0xE0) == 0xC0) bytes = 2;
+                    else if ((ch & 0xF0) == 0xE0) bytes = 3;
+                    else if ((ch & 0xF8) == 0xF0) bytes = 4;
+
+                    if (len + bytes < sizeof(dirname)) {
+                        dirname[len++] = ch;
+                        for (size_t i = 1; i < bytes; i++) {
+                            ch = wgetch(stdscr);
+                            if (ch == ERR || (ch & 0xC0) != 0x80) {
+                                dirname[len] = '\0';
+                                break;
+                            }
+                            dirname[len++] = ch;
+                        }
+                        dirname[len] = '\0';
+                        clear();
+                        mvprintw(0, 0, "Enter new directory name: %s", dirname);
+                        refresh();
+                    }
+                }
+            }
+            if (len > 0) {
                 fs_create_dir(state, dirname);
             }
         }
@@ -370,15 +436,51 @@ int search_handle_input(AppState *state) {
         state->search_active = false;
         state->mode = MODE_BROWSE;
     } else if (ch == KEY_BACKSPACE && strlen(state->search_input) > 0) {
-        state->search_input[strlen(state->search_input) - 1] = '\0';
-        state_filter_files(state, state->search_input);
-        ui_draw(state);
-    } else if (ch >= 32 && ch <= 126 && strlen(state->search_input) < 256 - 1) {
         size_t len = strlen(state->search_input);
-        state->search_input[len] = static_cast<char>(ch);
-        state->search_input[len + 1] = '\0';
-        state_filter_files(state, state->search_input);
-        ui_draw(state);
+        size_t pos = len;
+        while (pos > 0 && (state->search_input[pos - 1] & 0xC0) == 0x80) {
+            pos--;
+        }
+        if (pos > 0) {
+            state->search_input[pos - 1] = '\0';
+            state_filter_files(state, state->search_input);
+            ui_draw(state);
+        }
+    } else if (ch >= 32 && ch <= 126 && strlen(state->search_input) < 256 - 1) {
+        // Обрабатываем многобайтовый ввод
+        char buf[4] = {0}; // Достаточно для одного UTF-8 символа (максимум 4 байта)
+        buf[0] = static_cast<char>(ch);
+        size_t len = strlen(state->search_input);
+        if (len < 256 - 4) { // Учитываем, что символ может быть до 4 байт
+            // Проверяем, является ли ch началом UTF-8 символа
+            if ((ch & 0xC0) != 0x80) { // Не продолжительный байт
+                size_t bytes = 1;
+                if ((ch & 0xE0) == 0xC0) bytes = 2; // 2-байтовый символ
+                else if ((ch & 0xF0) == 0xE0) bytes = 3; // 3-байтовый символ
+                else if ((ch & 0xF8) == 0xF0) bytes = 4; // 4-байтовый символ
+
+                if (bytes == 1) {
+                    // Однобайтовый символ
+                    state->search_input[len] = ch;
+                    state->search_input[len + 1] = '\0';
+                } else {
+                    // Многобайтовый символ
+                    state->search_input[len] = ch;
+                    for (size_t i = 1; i < bytes; i++) {
+                        ch = wgetch(stdscr);
+                        if (ch == ERR || (ch & 0xC0) != 0x80) {
+                            // Некорректный UTF-8, отменяем
+                            state->search_input[len] = '\0';
+                            break;
+                        }
+                        state->search_input[len + i] = ch;
+                    }
+                    state->search_input[len + bytes] = '\0';
+                }
+                state_filter_files(state, state->search_input);
+                ui_draw(state);
+            }
+        }
     }
     return 1;
 }

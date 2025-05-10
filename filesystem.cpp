@@ -7,6 +7,9 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
+#include <strings.h> 
+#include <cwctype>   
+#include <wctype.h>
 
 void add_parent_dir_entry(std::vector<FileInfo> &files, const char *path) {
     // Проверяем, не корневая ли директория
@@ -94,8 +97,17 @@ void fs_search_recursive(const char *base_path, const char *query, std::vector<F
             continue;
         }
 
-        // Проверяем совпадение с поисковым запросом
-        if (strcasestr(entry->d_name, query)) {
+        // Преобразуем строки в широкие символы для корректного сравнения
+        wchar_t wname[PATH_MAX];
+        wchar_t wquery[PATH_MAX];
+        mbstowcs(wname, entry->d_name, PATH_MAX);
+        mbstowcs(wquery, query, PATH_MAX);
+
+        // Приводим к нижнему регистру для регистронезависимого сравнения
+        for (size_t i = 0; wname[i]; i++) wname[i] = towlower(wname[i]);
+        for (size_t i = 0; wquery[i]; i++) wquery[i] = towlower(wquery[i]);
+
+        if (wcsstr(wname, wquery)) {
             FileInfo file;
             file.name = strdup(full_path); // Сохраняем полный путь
             if (!file.name) {

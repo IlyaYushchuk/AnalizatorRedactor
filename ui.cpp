@@ -295,7 +295,7 @@ static void search_draw(AppState *state) {
         addwstr(display_size);
         addwstr(display_date);
 
-        // Сброс цвета
+        // Сброс цветаЁ
         if (is_selected) {
             attroff(COLOR_PAIR(1));
         } else if (file.is_dir) {
