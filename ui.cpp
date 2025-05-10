@@ -10,7 +10,245 @@
 #include <string>
 #include <limits.h>
 
+static std::wstring input_text_dialog(AppState *state, const char *prompt, const char *default_input = nullptr, bool allow_empty = false) {
+    if (!state || !prompt) {
+        fprintf(stderr, "Error: input_text_dialog called with NULL state or prompt\n");
+        return std::wstring();
+    }
 
+    // Создаём окно
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+    int win_height = 7;
+    int win_width = std::min(max_x - 4, 60);
+    int start_y = (max_y - win_height) / 2;
+    int start_x = (max_x - win_width) / 2;
+
+    WINDOW *dialog_win = newwin(win_height, win_width, start_y, start_x);
+    if (!dialog_win) {
+        fprintf(stderr, "Failed to create dialog window\n");
+        return std::wstring();
+    }
+
+    box(dialog_win, 0, 0);
+    wbkgd(dialog_win, COLOR_PAIR(3));
+    keypad(dialog_win, TRUE); // Включаем поддержку специальных клавиш
+
+    // Инициализируем ввод
+    std::wstring input;
+    if (default_input) {
+        std::string default_str(default_input);
+        std::wstring wdefault;
+        mbstate_t mbs = {};
+        const char *p = default_str.c_str();
+        size_t len = mbsrtowcs(nullptr, &p, 0, &mbs);
+        if (len != (size_t)-1) {
+            wdefault.resize(len);
+            mbsrtowcs(&wdefault[0], &p, len, &mbs);
+            input = wdefault;
+        }
+    }
+
+    bool input_active = true;
+    while (input_active) {
+        // Конвертируем wstring в UTF-8 для отображения
+        std::string input_utf8;
+        char buf[MB_CUR_MAX];
+        for (wchar_t wch : input) {
+            int len = wctomb(buf, wch);
+            if (len > 0) input_utf8.append(buf, len);
+        }
+
+        // Очищаем строку ввода
+        wmove(dialog_win, 3, 2);
+        wclrtoeol(dialog_win);
+
+        // Отображаем содержимое
+        mvwprintw(dialog_win, 1, 2, "%s", prompt);
+        mvwprintw(dialog_win, 3, 2, "> %s", input_utf8.c_str());
+        mvwprintw(dialog_win, 5, 2, "Enter: Confirm | Esc: Cancel | Backspace: Delete");
+        wrefresh(dialog_win);
+
+        wint_t ch;
+        if (wget_wch(dialog_win, &ch) == ERR) continue;
+
+        if (ch == '\n') { // Enter
+            if (!input.empty() || allow_empty) {
+                input_active = false;
+            }
+        } else if (ch == 27) { // Esc
+            input.clear();
+            input_active = false;
+        } else if (ch == KEY_BACKSPACE || ch == 127 || ch == '\b') { // Backspace
+            if (!input.empty()) {
+                input.pop_back();
+            }
+        } else if (ch >= 32 && input.size() < 255) { // Печатные символы
+            input.push_back(static_cast<wchar_t>(ch));
+        }
+    }
+
+    delwin(dialog_win);
+    touchwin(stdscr);
+    ui_draw(state);
+    return input;
+}
+
+std::wstring ui_show_file_create_dialog(AppState *state) {
+    return input_text_dialog(state, "Enter new file name:");
+}
+
+std::wstring ui_show_dir_create_dialog(AppState *state) {
+    return input_text_dialog(state, "Enter new directory name:");
+}
+
+std::wstring ui_show_rename_dialog(AppState *state, const char *old_name) {
+    return input_text_dialog(state, "Enter new name:", old_name);
+}
+
+std::wstring ui_show_analysis_days_dialog(AppState *state) {
+    return input_text_dialog(state, "Enter number of days (default 180):", "180", true);
+}
+
+bool ui_show_confirm_delete_dialog(AppState *state, const char *name, bool is_dir) {
+    if (!state || !name) {
+        fprintf(stderr, "Error: ui_show_confirm_delete_dialog called with NULL state or name\n");
+        return false;
+    }
+
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+    int win_height = 5;
+    int win_width = std::min(max_x - 4, 40);
+    int start_y = (max_y - win_height) / 2;
+    int start_x = (max_x - win_width) / 2;
+
+    WINDOW *confirm_win = newwin(win_height, win_width, start_y, start_x);
+    if (!confirm_win) {
+        fprintf(stderr, "Failed to create confirm window\n");
+        return false;
+    }
+
+    box(confirm_win, 0, 0);
+    wbkgd(confirm_win, COLOR_PAIR(3));
+    mvwprintw(confirm_win, 1, 2, "Delete %s '%s'?", is_dir ? "directory" : "file", name);
+    mvwprintw(confirm_win, 3, 2, "y: Yes | n: No");
+    wrefresh(confirm_win);
+
+    int ch = wgetch(confirm_win);
+    delwin(confirm_win);
+    touchwin(stdscr);
+    ui_draw(state);
+
+    return (ch == 'y' || ch == 'Y');
+}
+
+void ui_show_error_dialog(AppState *state, const char *message) {
+    if (!state || !message) {
+        fprintf(stderr, "Error: ui_show_error_dialog called with NULL state or message\n");
+        return;
+    }
+
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+    int win_height = 5;
+    int win_width = std::min(max_x - 4, 60);
+    int start_y = (max_y - win_height) / 2;
+    int start_x = (max_x - win_width) / 2;
+
+    WINDOW *err_win = newwin(win_height, win_width, start_y, start_x);
+    if (!err_win) {
+        fprintf(stderr, "Failed to create error window\n");
+        return;
+    }
+
+    box(err_win, 0, 0);
+    wbkgd(err_win, COLOR_PAIR(3));
+    mvwprintw(err_win, 1, 2, "%s", message);
+    mvwprintw(err_win, 3, 2, "Press any key to continue");
+    wrefresh(err_win);
+    getch();
+    delwin(err_win);
+    touchwin(stdscr);
+    ui_draw(state);
+}
+
+std::wstring ui_show_input_dialog(AppState *state, const char *prompt, const char *default_input, bool allow_empty) {
+    if (!state || !prompt) {
+        fprintf(stderr, "Error: ui_show_input_dialog called with NULL state or prompt\n");
+        return std::wstring();
+    }
+
+    // Создаём окно
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+    int win_height = 7;
+    int win_width = std::min(max_x - 4, 60);
+    int start_y = (max_y - win_height) / 2;
+    int start_x = (max_x - win_width) / 2;
+
+    WINDOW *dialog_win = newwin(win_height, win_width, start_y, start_x);
+    if (!dialog_win) {
+        fprintf(stderr, "Failed to create dialog window\n");
+        return std::wstring();
+    }
+
+    box(dialog_win, 0, 0);
+    wbkgd(dialog_win, COLOR_PAIR(3));
+
+    // Инициализируем ввод
+    std::wstring input;
+    if (default_input) {
+        std::string default_str(default_input);
+        std::wstring wdefault;
+        mbstate_t mbs = {};
+        const char *p = default_str.c_str();
+        size_t len = mbsrtowcs(nullptr, &p, 0, &mbs);
+        if (len != (size_t)-1) {
+            wdefault.resize(len);
+            mbsrtowcs(&wdefault[0], &p, len, &mbs);
+            input = wdefault;
+        }
+    }
+
+    bool input_active = true;
+    while (input_active) {
+        // Конвертируем wstring в UTF-8 для отображения
+        std::string input_utf8;
+        char buf[MB_CUR_MAX];
+        for (wchar_t wch : input) {
+            int len = wctomb(buf, wch);
+            if (len > 0) input_utf8.append(buf, len);
+        }
+
+        // Отображаем содержимое
+        mvwprintw(dialog_win, 1, 2, "%s", prompt);
+        mvwprintw(dialog_win, 3, 2, "> %s", input_utf8.c_str());
+        mvwprintw(dialog_win, 5, 2, "Enter: Confirm | Esc: Cancel | Backspace: Delete");
+        wrefresh(dialog_win);
+
+        wint_t ch;
+        if (wget_wch(dialog_win, &ch) == ERR) continue;
+
+        if (ch == '\n') { // Enter
+            if (!input.empty() || allow_empty) {
+                input_active = false;
+            }
+        } else if (ch == 27) { // Esc
+            input.clear();
+            input_active = false;
+        } else if (ch == KEY_BACKSPACE && !input.empty()) { // Backspace
+            input.pop_back();
+        } else if (ch >= 32 && input.size() < 255) { // Печатные символы
+            input.push_back(static_cast<wchar_t>(ch));
+        }
+    }
+
+    delwin(dialog_win);
+    touchwin(stdscr);
+    ui_draw(state);
+    return input;
+}
 
 // Функция для отображения метаданных
 void ui_show_metadata(AppState *state, const Metadata &meta) {

@@ -166,16 +166,21 @@ void fs_create_file(AppState *state, const char *filename) {
     char full_path[PATH_MAX];
     snprintf(full_path, sizeof(full_path), "%s/%s", state->current_dir, filename);
     
-    int fd = open(full_path, O_CREAT | O_WRONLY, 0644);
+    struct stat st;
+    if (stat(full_path, &st) == 0) {
+        fprintf(stderr, "Error: File already exists: %s\n", full_path);
+        return;
+    }
+
+    int fd = open(full_path, O_CREAT | O_WRONLY | O_EXCL, 0644);
     if (fd == -1) {
         fprintf(stderr, "Failed to create file: %s (%s)\n", full_path, strerror(errno));
         return;
     }
     close(fd);
     printf("Created file: %s\n", full_path);
-    state_load_files(state); // Обновляем список файлов
+    state_load_files(state);
 }
-
 // Создание новой папки
 void fs_create_dir(AppState *state, const char *dirname) {
     if (!state || !dirname) {
@@ -185,12 +190,18 @@ void fs_create_dir(AppState *state, const char *dirname) {
     char full_path[PATH_MAX];
     snprintf(full_path, sizeof(full_path), "%s/%s", state->current_dir, dirname);
     
+    struct stat st;
+    if (stat(full_path, &st) == 0) {
+        fprintf(stderr, "Error: Directory already exists: %s\n", full_path);
+        return;
+    }
+
     if (mkdir(full_path, 0755) == -1) {
         fprintf(stderr, "Failed to create directory: %s (%s)\n", full_path, strerror(errno));
         return;
     }
     printf("Created directory: %s\n", full_path);
-    state_load_files(state); // Обновляем список файлов
+    state_load_files(state);
 }
 
 // Переименование файла или папки
@@ -204,14 +215,19 @@ void fs_rename(AppState *state, const char *old_name, const char *new_name) {
     snprintf(old_path, sizeof(old_path), "%s/%s", state->current_dir, old_name);
     snprintf(new_path, sizeof(new_path), "%s/%s", state->current_dir, new_name);
     
+    struct stat st;
+    if (stat(new_path, &st) == 0) {
+        fprintf(stderr, "Error: Name already exists: %s\n", new_path);
+        return;
+    }
+
     if (rename(old_path, new_path) == -1) {
         fprintf(stderr, "Failed to rename %s to %s (%s)\n", old_path, new_path, strerror(errno));
         return;
     }
     printf("Renamed %s to %s\n", old_path, new_path);
-    state_load_files(state); // Обновляем список файлов
+    state_load_files(state);
 }
-
 // Копирование файла/папки в буфер
 void fs_copy(AppState *state, const char *src_path) {
     if (!state || !src_path) {
@@ -431,24 +447,13 @@ void fs_delete_file(AppState *state, const char *filename) {
     char full_path[PATH_MAX];
     snprintf(full_path, sizeof(full_path), "%s/%s", state->current_dir, filename);
 
-    // Запрашиваем подтверждение
-    clear();
-    mvprintw(0, 0, "Delete file %s? (y/n)", filename);
-    refresh();
-    int confirm = getch();
-    if (confirm != 'y' && confirm != 'Y') {
-        printf("File deletion canceled: %s\n", full_path);
-        return;
-    }
-
     if (unlink(full_path) == -1) {
         fprintf(stderr, "Failed to delete file: %s (%s)\n", full_path, strerror(errno));
         return;
     }
     printf("Deleted file: %s\n", full_path);
-    state_load_files(state); // Обновляем список файлов
+    state_load_files(state);
 }
-
 
 // Удаление директории с подтверждением
 void fs_delete_dir(AppState *state, const char *dirname) {
@@ -464,20 +469,10 @@ void fs_delete_dir(AppState *state, const char *dirname) {
     char full_path[PATH_MAX];
     snprintf(full_path, sizeof(full_path), "%s/%s", state->current_dir, dirname);
 
-    // Запрашиваем подтверждение
-    clear();
-    mvprintw(0, 0, "Delete directory %s and all its contents? (y/n)", dirname);
-    refresh();
-    int confirm = getch();
-    if (confirm != 'y' && confirm != 'Y') {
-        printf("Directory deletion canceled: %s\n", full_path);
-        return;
-    }
-
     if (remove_directory(full_path) == -1) {
         fprintf(stderr, "Failed to delete directory: %s\n", full_path);
         return;
     }
     printf("Deleted directory: %s\n", full_path);
-    state_load_files(state); // Обновляем список файлов
+    state_load_files(state);
 }

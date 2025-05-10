@@ -56,6 +56,82 @@ void editor_load_file(EditorState *editor, const char *filename);
 #include <limits.h>
 
 
+std::wstring ui_show_input_dialog(AppState *state, const char *prompt, const char *default_input, bool allow_empty) {
+    if (!state || !prompt) {
+        fprintf(stderr, "Error: ui_show_input_dialog called with NULL state or prompt\n");
+        return std::wstring();
+    }
+
+    // Создаём окно
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
+    int win_height = 7;
+    int win_width = std::min(max_x - 4, 60);
+    int start_y = (max_y - win_height) / 2;
+    int start_x = (max_x - win_width) / 2;
+
+    WINDOW *dialog_win = newwin(win_height, win_width, start_y, start_x);
+    if (!dialog_win) {
+        fprintf(stderr, "Failed to create dialog window\n");
+        return std::wstring();
+    }
+
+    box(dialog_win, 0, 0);
+    wbkgd(dialog_win, COLOR_PAIR(3));
+
+    // Инициализируем ввод
+    std::wstring input;
+    if (default_input) {
+        std::string default_str(default_input);
+        std::wstring wdefault;
+        mbstate_t mbs = {};
+        const char *p = default_str.c_str();
+        size_t len = mbsrtowcs(nullptr, &p, 0, &mbs);
+        if (len != (size_t)-1) {
+            wdefault.resize(len);
+            mbsrtowcs(&wdefault[0], &p, len, &mbs);
+            input = wdefault;
+        }
+    }
+
+    bool input_active = true;
+    while (input_active) {
+        // Конвертируем wstring в UTF-8 для отображения
+        std::string input_utf8;
+        char buf[MB_CUR_MAX];
+        for (wchar_t wch : input) {
+            int len = wctomb(buf, wch);
+            if (len > 0) input_utf8.append(buf, len);
+        }
+
+        // Отображаем содержимое
+        mvwprintw(dialog_win, 1, 2, "%s", prompt);
+        mvwprintw(dialog_win, 3, 2, "> %s", input_utf8.c_str());
+        mvwprintw(dialog_win, 5, 2, "Enter: Confirm | Esc: Cancel | Backspace: Delete");
+        wrefresh(dialog_win);
+
+        wint_t ch;
+        if (wget_wch(dialog_win, &ch) == ERR) continue;
+
+        if (ch == '\n') { // Enter
+            if (!input.empty() || allow_empty) {
+                input_active = false;
+            }
+        } else if (ch == 27) { // Esc
+            input.clear();
+            input_active = false;
+        } else if (ch == KEY_BACKSPACE && !input.empty()) { // Backspace
+            input.pop_back();
+        } else if (ch >= 32 && input.size() < 255) { // Печатные символы
+            input.push_back(static_cast<wchar_t>(ch));
+        }
+    }
+
+    delwin(dialog_win);
+    touchwin(stdscr);
+    ui_draw(state);
+    return input;
+}
 
 // Функция для отображения метаданных
 void ui_show_metadata(AppState *state, const Metadata &meta) {
@@ -340,7 +416,7 @@ static void search_draw(AppState *state) {
         addwstr(display_size);
         addwstr(display_date);
 
-        // Сброс цвета
+        // Сброс цветаЁ
         if (is_selected) {
             attroff(COLOR_PAIR(1));
         } else if (file.is_dir) {
@@ -1140,59 +1216,99 @@ int browse_handle_input(AppState *state) {
             break;
         case KEY_F(3):
         {
-            clear();
-            mvprintw(0, 0, "Enter number of days for old files (default 180): ");
-            refresh();
-            echo();
-            char input[32] = "";
-            int y, x;
-            getyx(stdscr, y, x);
-            move(y, x);
-            getnstr(input, sizeof(input) - 1);
-            noecho();
+            std::wstring input = ui_show_input_dialog(state, "Enter number of days for old files (default 180):", "180", true);
+            if (!input.empty()) {
+                std::string days_str;
+                char buf[MB_CUR_MAX];
+                for (wchar_t wch : input) {
+                    int len = wctomb(buf, wch);
+                    if (len > 0) days_str.append(buf, len);
+                }
 
-            long days = 180;
-            if (strlen(input) > 0) {
                 char *endptr;
-                days = strtol(input, &endptr, 10);
+                long days = strtol(days_str.c_str(), &endptr, 10);
                 if (*endptr != '\0' || days < 0) {
-                    mvprintw(1, 0, "Invalid input, using default (180 days)");
-                    refresh();
+                    WINDOW *err_win = newwin(5, 40, (max_y - 5) / 2, (max_x - 40) / 2);
+                    box(err_win, 0, 0);
+                    wbkgd(err_win, COLOR_PAIR(3));
+                    mvwprintw(err_win, 1, 2, "Error: Invalid number of days");
+                    mvwprintw(err_win, 3, 2, "Press any key to continue");
+                    wrefresh(err_win);
                     getch();
+                    delwin(err_win);
+                    touchwin(stdscr);
+                    ui_draw(state);
                     days = 180;
                 }
-            }
 
-            time_t now = time(NULL);
-            time_t old_threshold = now - days * 24 * 3600;
-            analysis_perform(state, old_threshold);
+                time_t now = time(NULL);
+                time_t old_threshold = now - days * 24 * 3600;
+                analysis_perform(state, old_threshold);
+            }
         }
             break;
         case KEY_F(5): // Создание файла
         {
-            clear();
-            mvprintw(0, 0, "Enter new file name: ");
-            refresh();
-            echo();
-            char filename[256] = "";
-            getnstr(filename, sizeof(filename) - 1);
-            noecho();
-            if (strlen(filename) > 0) {
-                fs_create_file(state, filename);
+            std::wstring input = ui_show_input_dialog(state, "Enter new file name:");
+            if (!input.empty()) {
+                // Конвертируем wstring в UTF-8
+                std::string filename;
+                char buf[MB_CUR_MAX];
+                for (wchar_t wch : input) {
+                    int len = wctomb(buf, wch);
+                    if (len > 0) filename.append(buf, len);
+                }
+
+                char full_path[PATH_MAX];
+                snprintf(full_path, sizeof(full_path), "%s/%s", state->current_dir, filename.c_str());
+                struct stat st;
+                if (stat(full_path, &st) == 0) {
+                    // Файл уже существует
+                    WINDOW *err_win = newwin(5, 40, (max_y - 5) / 2, (max_x - 40) / 2);
+                    box(err_win, 0, 0);
+                    wbkgd(err_win, COLOR_PAIR(3));
+                    mvwprintw(err_win, 1, 2, "Error: File '%s' already exists", filename.c_str());
+                    mvwprintw(err_win, 3, 2, "Press any key to continue");
+                    wrefresh(err_win);
+                    getch();
+                    delwin(err_win);
+                    touchwin(stdscr);
+                    ui_draw(state);
+                } else {
+                    fs_create_file(state, filename.c_str());
+                }
             }
         }
             break;
         case KEY_F(6): // Создание папки
         {
-            clear();
-            mvprintw(0, 0, "Enter new directory name: ");
-            refresh();
-            echo();
-            char dirname[256] = "";
-            getnstr(dirname, sizeof(dirname) - 1);
-            noecho();
-            if (strlen(dirname) > 0) {
-                fs_create_dir(state, dirname);
+            std::wstring input = ui_show_input_dialog(state, "Enter new directory name:");
+            if (!input.empty()) {
+                std::string dirname;
+                char buf[MB_CUR_MAX];
+                for (wchar_t wch : input) {
+                    int len = wctomb(buf, wch);
+                    if (len > 0) dirname.append(buf, len);
+                }
+
+                char full_path[PATH_MAX];
+                snprintf(full_path, sizeof(full_path), "%s/%s", state->current_dir, dirname.c_str());
+                struct stat st;
+                if (stat(full_path, &st) == 0) {
+                    // Папка уже существует
+                    WINDOW *err_win = newwin(5, 40, (max_y - 5) / 2, (max_x - 40) / 2);
+                    box(err_win, 0, 0);
+                    wbkgd(err_win, COLOR_PAIR(3));
+                    mvwprintw(err_win, 1, 2, "Error: Directory '%s' already exists", dirname.c_str());
+                    mvwprintw(err_win, 3, 2, "Press any key to continue");
+                    wrefresh(err_win);
+                    getch();
+                    delwin(err_win);
+                    touchwin(stdscr);
+                    ui_draw(state);
+                } else {
+                    fs_create_dir(state, dirname.c_str());
+                }
             }
         }
             break;
@@ -1200,15 +1316,34 @@ int browse_handle_input(AppState *state) {
         {
             const std::vector<FileInfo> &display_files = state->filtered_files.size() > 0 ? state->filtered_files : state->files;
             if (state->selected_index < static_cast<long long>(display_files.size())) {
-                clear();
-                mvprintw(0, 0, "Enter new name for %s: ", display_files[state->selected_index].name);
-                refresh();
-                echo();
-                char new_name[256] = "";
-                getnstr(new_name, sizeof(new_name) - 1);
-                noecho();
-                if (strlen(new_name) > 0) {
-                    fs_rename(state, display_files[state->selected_index].name, new_name);
+                const char *old_name = display_files[state->selected_index].name;
+                std::wstring input = ui_show_input_dialog(state, "Enter new name:", old_name);
+                if (!input.empty()) {
+                    std::string new_name;
+                    char buf[MB_CUR_MAX];
+                    for (wchar_t wch : input) {
+                        int len = wctomb(buf, wch);
+                        if (len > 0) new_name.append(buf, len);
+                    }
+
+                    char full_path[PATH_MAX];
+                    snprintf(full_path, sizeof(full_path), "%s/%s", state->current_dir, new_name.c_str());
+                    struct stat st;
+                    if (stat(full_path, &st) == 0) {
+                        // Имя уже существует
+                        WINDOW *err_win = newwin(5, 40, (max_y - 5) / 2, (max_x - 40) / 2);
+                        box(err_win, 0, 0);
+                        wbkgd(err_win, COLOR_PAIR(3));
+                        mvwprintw(err_win, 1, 2, "Error: Name '%s' already exists", new_name.c_str());
+                        mvwprintw(err_win, 3, 2, "Press any key to continue");
+                        wrefresh(err_win);
+                        getch();
+                        delwin(err_win);
+                        touchwin(stdscr);
+                        ui_draw(state);
+                    } else {
+                        fs_rename(state, old_name, new_name.c_str());
+                    }
                 }
             }
         }
@@ -1241,11 +1376,29 @@ int browse_handle_input(AppState *state) {
             const std::vector<FileInfo> &display_files = state->filtered_files.size() > 0 ? state->filtered_files : state->files;
             if (state->selected_index < static_cast<long long>(display_files.size())) {
                 const FileInfo &file = display_files[state->selected_index];
-                if (file.is_dir) {
-                    fs_delete_dir(state, file.name);
-                } else {
-                    fs_delete_file(state, file.name);
+
+                // Создаём окно подтверждения
+                int max_y, max_x;
+                getmaxyx(stdscr, max_y, max_x);
+                WINDOW *confirm_win = newwin(5, 40, (max_y - 5) / 2, (max_x - 40) / 2);
+                box(confirm_win, 0, 0);
+                wbkgd(confirm_win, COLOR_PAIR(3));
+                mvwprintw(confirm_win, 1, 2, "Delete %s '%s'?", file.is_dir ? "directory" : "file", file.name);
+                mvwprintw(confirm_win, 3, 2, "y: Yes | n: No");
+                wrefresh(confirm_win);
+
+                int confirm = getch();
+                delwin(confirm_win);
+                touchwin(stdscr);
+
+                if (confirm == 'y' || confirm == 'Y') {
+                    if (file.is_dir) {
+                        fs_delete_dir(state, file.name);
+                    } else {
+                        fs_delete_file(state, file.name);
+                    }
                 }
+                ui_draw(state);
             }
         }
             break;
@@ -1381,15 +1534,51 @@ int search_handle_input(AppState *state) {
         state->search_active = false;
         state->mode = MODE_BROWSE;
     } else if (ch == KEY_BACKSPACE && strlen(state->search_input) > 0) {
-        state->search_input[strlen(state->search_input) - 1] = '\0';
-        state_filter_files(state, state->search_input);
-        ui_draw(state);
-    } else if (ch >= 32 && ch <= 126 && strlen(state->search_input) < 256 - 1) {
         size_t len = strlen(state->search_input);
-        state->search_input[len] = static_cast<char>(ch);
-        state->search_input[len + 1] = '\0';
-        state_filter_files(state, state->search_input);
-        ui_draw(state);
+        size_t pos = len;
+        while (pos > 0 && (state->search_input[pos - 1] & 0xC0) == 0x80) {
+            pos--;
+        }
+        if (pos > 0) {
+            state->search_input[pos - 1] = '\0';
+            state_filter_files(state, state->search_input);
+            ui_draw(state);
+        }
+    } else if (ch >= 32 && ch <= 126 && strlen(state->search_input) < 256 - 1) {
+        // Обрабатываем многобайтовый ввод
+        char buf[4] = {0}; // Достаточно для одного UTF-8 символа (максимум 4 байта)
+        buf[0] = static_cast<char>(ch);
+        size_t len = strlen(state->search_input);
+        if (len < 256 - 4) { // Учитываем, что символ может быть до 4 байт
+            // Проверяем, является ли ch началом UTF-8 символа
+            if ((ch & 0xC0) != 0x80) { // Не продолжительный байт
+                size_t bytes = 1;
+                if ((ch & 0xE0) == 0xC0) bytes = 2; // 2-байтовый символ
+                else if ((ch & 0xF0) == 0xE0) bytes = 3; // 3-байтовый символ
+                else if ((ch & 0xF8) == 0xF0) bytes = 4; // 4-байтовый символ
+
+                if (bytes == 1) {
+                    // Однобайтовый символ
+                    state->search_input[len] = ch;
+                    state->search_input[len + 1] = '\0';
+                } else {
+                    // Многобайтовый символ
+                    state->search_input[len] = ch;
+                    for (size_t i = 1; i < bytes; i++) {
+                        ch = wgetch(stdscr);
+                        if (ch == ERR || (ch & 0xC0) != 0x80) {
+                            // Некорректный UTF-8, отменяем
+                            state->search_input[len] = '\0';
+                            break;
+                        }
+                        state->search_input[len + i] = ch;
+                    }
+                    state->search_input[len + bytes] = '\0';
+                }
+                state_filter_files(state, state->search_input);
+                ui_draw(state);
+            }
+        }
     }
     return 1;
 }
@@ -2033,6 +2222,7 @@ void ui_deinit();
 void ui_draw(AppState *state);
 int ui_handle_input(AppState *state);
 void ui_show_metadata(AppState *state, const Metadata &meta);
+std::wstring ui_show_input_dialog(AppState *state, const char *prompt, const char *default_input = nullptr, bool allow_empty = false);
 
 #endif
 ```
@@ -2068,6 +2258,9 @@ int main() {
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
+#include <strings.h> 
+#include <cwctype>   
+#include <wctype.h>
 
 void add_parent_dir_entry(std::vector<FileInfo> &files, const char *path) {
     // Проверяем, не корневая ли директория
@@ -2155,8 +2348,17 @@ void fs_search_recursive(const char *base_path, const char *query, std::vector<F
             continue;
         }
 
-        // Проверяем совпадение с поисковым запросом
-        if (strcasestr(entry->d_name, query)) {
+        // Преобразуем строки в широкие символы для корректного сравнения
+        wchar_t wname[PATH_MAX];
+        wchar_t wquery[PATH_MAX];
+        mbstowcs(wname, entry->d_name, PATH_MAX);
+        mbstowcs(wquery, query, PATH_MAX);
+
+        // Приводим к нижнему регистру для регистронезависимого сравнения
+        for (size_t i = 0; wname[i]; i++) wname[i] = towlower(wname[i]);
+        for (size_t i = 0; wquery[i]; i++) wquery[i] = towlower(wquery[i]);
+
+        if (wcsstr(wname, wquery)) {
             FileInfo file;
             file.name = strdup(full_path); // Сохраняем полный путь
             if (!file.name) {

@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <unistd.h>
 #include <limits.h>
+#include <sys/stat.h> 
 
 int browse_handle_input(AppState *state) {
     if (!state) {
@@ -20,6 +21,8 @@ int browse_handle_input(AppState *state) {
     int ch = getch();
     MEVENT event;
     bool quit = false;
+    int max_y, max_x;
+    getmaxyx(stdscr, max_y, max_x);
     switch (ch) {
         case 17: // Ctrl+Q
             quit = true;
@@ -98,125 +101,71 @@ int browse_handle_input(AppState *state) {
             break;
         case KEY_F(3):
         {
-            clear();
-            mvprintw(0, 0, "Enter number of days for old files (default 180): ");
-            refresh();
-            echo();
-            char input[32] = "";
-            int y, x;
-            getyx(stdscr, y, x);
-            move(y, x);
-            getnstr(input, sizeof(input) - 1);
-            noecho();
+            std::wstring input = ui_show_analysis_days_dialog(state);
+            if (!input.empty()) {
+                std::string days_str;
+                char buf[MB_CUR_MAX];
+                for (wchar_t wch : input) {
+                    int len = wctomb(buf, wch);
+                    if (len > 0) days_str.append(buf, len);
+                }
 
-            long days = 180;
-            if (strlen(input) > 0) {
                 char *endptr;
-                days = strtol(input, &endptr, 10);
+                long days = strtol(days_str.c_str(), &endptr, 10);
                 if (*endptr != '\0' || days < 0) {
-                    mvprintw(1, 0, "Invalid input, using default (180 days)");
-                    refresh();
-                    getch();
+                    ui_show_error_dialog(state, "Error: Invalid number of days");
                     days = 180;
                 }
-            }
 
-            time_t now = time(NULL);
-            time_t old_threshold = now - days * 24 * 3600;
-            analysis_perform(state, old_threshold);
+                time_t now = time(NULL);
+                time_t old_threshold = now - days * 24 * 3600;
+                analysis_perform(state, old_threshold);
+            }
         }
             break;
         case KEY_F(5): // Создание файла
         {
-            clear();
-            mvprintw(0, 0, "Enter new file name: ");
-            char filename[256] = "";
-            size_t len = 0;
-            int ch;
-            while ((ch = getch()) != '\n' && len < sizeof(filename) - 4) {
-                if (ch == KEY_BACKSPACE && len > 0) {
-                    // Удаляем последний UTF-8 символ
-                    while (len > 0 && (filename[len - 1] & 0xC0) == 0x80) {
-                        filename[--len] = '\0';
-                    }
-                    if (len > 0) {
-                        filename[--len] = '\0';
-                    }
-                    clear();
-                    mvprintw(0, 0, "Enter new file name: %s", filename);
-                    refresh();
-                } else if ((ch & 0xC0) != 0x80) { // Начало UTF-8 символа
-                    size_t bytes = 1;
-                    if ((ch & 0xE0) == 0xC0) bytes = 2;
-                    else if ((ch & 0xF0) == 0xE0) bytes = 3;
-                    else if ((ch & 0xF8) == 0xF0) bytes = 4;
-
-                    if (len + bytes < sizeof(filename)) {
-                        filename[len++] = ch;
-                        for (size_t i = 1; i < bytes; i++) {
-                            ch = wgetch(stdscr);
-                            if (ch == ERR || (ch & 0xC0) != 0x80) {
-                                filename[len] = '\0';
-                                break;
-                            }
-                            filename[len++] = ch;
-                        }
-                        filename[len] = '\0';
-                        clear();
-                        mvprintw(0, 0, "Enter new file name: %s", filename);
-                        refresh();
-                    }
+            std::wstring input = ui_show_file_create_dialog(state);
+            if (!input.empty()) {
+                std::string filename;
+                char buf[MB_CUR_MAX];
+                for (wchar_t wch : input) {
+                    int len = wctomb(buf, wch);
+                    if (len > 0) filename.append(buf, len);
                 }
-            }
-            if (len > 0) {
-                fs_create_file(state, filename);
+
+                char full_path[PATH_MAX];
+                snprintf(full_path, sizeof(full_path), "%s/%s", state->current_dir, filename.c_str());
+                struct stat st;
+                if (stat(full_path, &st) == 0) {
+                    std::string err_msg = "Error: File '" + filename + "' already exists";
+                    ui_show_error_dialog(state, err_msg.c_str());
+                } else {
+                    fs_create_file(state, filename.c_str());
+                }
             }
         }
             break;
         case KEY_F(6): // Создание папки
         {
-            clear();
-            mvprintw(0, 0, "Enter new directory name: ");
-            char dirname[256] = "";
-            size_t len = 0;
-            int ch;
-            while ((ch = getch()) != '\n' && len < sizeof(dirname) - 4) {
-                if (ch == KEY_BACKSPACE && len > 0) {
-                    // Удаляем последний UTF-8 символ
-                    while (len > 0 && (dirname[len - 1] & 0xC0) == 0x80) {
-                        dirname[--len] = '\0';
-                    }
-                    if (len > 0) {
-                        dirname[--len] = '\0';
-                    }
-                    clear();
-                    mvprintw(0, 0, "Enter new directory name: %s", dirname);
-                    refresh();
-                } else if ((ch & 0xC0) != 0x80) { // Начало UTF-8 символа
-                    size_t bytes = 1;
-                    if ((ch & 0xE0) == 0xC0) bytes = 2;
-                    else if ((ch & 0xF0) == 0xE0) bytes = 3;
-                    else if ((ch & 0xF8) == 0xF0) bytes = 4;
-
-                    if (len + bytes < sizeof(dirname)) {
-                        dirname[len++] = ch;
-                        for (size_t i = 1; i < bytes; i++) {
-                            ch = wgetch(stdscr);
-                            if (ch == ERR || (ch & 0xC0) != 0x80) {
-                                dirname[len] = '\0';
-                                break;
-                            }
-                            dirname[len++] = ch;
-                        }
-                        dirname[len] = '\0';
-                        clear();
-                        mvprintw(0, 0, "Enter new directory name: %s", dirname);
-                        refresh();
-                    }
+            std::wstring input = ui_show_dir_create_dialog(state);
+            if (!input.empty()) {
+                std::string dirname;
+                char buf[MB_CUR_MAX];
+                for (wchar_t wch : input) {
+                    int len = wctomb(buf, wch);
+                    if (len > 0) dirname.append(buf, len);
                 }
-            }
-            if (len > 0) {
-                fs_create_dir(state, dirname);
+
+                char full_path[PATH_MAX];
+                snprintf(full_path, sizeof(full_path), "%s/%s", state->current_dir, dirname.c_str());
+                struct stat st;
+                if (stat(full_path, &st) == 0) {
+                    std::string err_msg = "Error: Directory '" + dirname + "' already exists";
+                    ui_show_error_dialog(state, err_msg.c_str());
+                } else {
+                    fs_create_dir(state, dirname.c_str());
+                }
             }
         }
             break;
@@ -224,47 +173,26 @@ int browse_handle_input(AppState *state) {
         {
             const std::vector<FileInfo> &display_files = state->filtered_files.size() > 0 ? state->filtered_files : state->files;
             if (state->selected_index < static_cast<long long>(display_files.size())) {
-                clear();
-                std::wstring new_name_wstr; // Используем wstring для хранения широких символов
-                bool input_active = true;
-
-                while (input_active) {
-                    // Конвертируем wstring в UTF-8 для отображения
-                    std::string new_name_utf8;
+                const char *old_name = display_files[state->selected_index].name;
+                std::wstring input = ui_show_rename_dialog(state, old_name);
+                if (!input.empty()) {
+                    std::string new_name;
                     char buf[MB_CUR_MAX];
-                    for (wchar_t wch : new_name_wstr) {
+                    for (wchar_t wch : input) {
                         int len = wctomb(buf, wch);
-                        if (len > 0) new_name_utf8.append(buf, len);
+                        if (len > 0) new_name.append(buf, len);
                     }
-                    mvprintw(0, 0, "Enter new name for %s: %s", display_files[state->selected_index].name, new_name_utf8.c_str());
-                    clrtoeol();
-                    refresh();
 
-                    wint_t ch;
-                    int ret = wget_wch(stdscr, &ch);
-                    if (ret == ERR) continue;
-
-                    if (ch == '\n') { // Enter - завершить ввод
-                        if (!new_name_wstr.empty()) {
-                            // Конвертируем wstring в UTF-8 для fs_rename
-                            std::string new_name_final;
-                            for (wchar_t wch : new_name_wstr) {
-                                int len = wctomb(buf, wch);
-                                if (len > 0) new_name_final.append(buf, len);
-                            }
-                            fs_rename(state, display_files[state->selected_index].name, new_name_final.c_str());
-                        }
-                        input_active = false;
-                    } else if (ch == 27) { // Esc - отменить
-                        input_active = false;
-                    } else if (ch == KEY_BACKSPACE && !new_name_wstr.empty()) { // Backspace - удалить символ
-                        new_name_wstr.pop_back();
-                    } else if (ret == OK && new_name_wstr.size() < 255) { // Печатные символы
-                        new_name_wstr.push_back(static_cast<wchar_t>(ch));
+                    char full_path[PATH_MAX];
+                    snprintf(full_path, sizeof(full_path), "%s/%s", state->current_dir, new_name.c_str());
+                    struct stat st;
+                    if (stat(full_path, &st) == 0) {
+                        std::string err_msg = "Error: Name '" + new_name + "' already exists";
+                        ui_show_error_dialog(state, err_msg.c_str());
+                    } else {
+                        fs_rename(state, old_name, new_name.c_str());
                     }
                 }
-                clear();
-                ui_draw(state);
             }
         }
             break;
@@ -296,10 +224,12 @@ int browse_handle_input(AppState *state) {
             const std::vector<FileInfo> &display_files = state->filtered_files.size() > 0 ? state->filtered_files : state->files;
             if (state->selected_index < static_cast<long long>(display_files.size())) {
                 const FileInfo &file = display_files[state->selected_index];
-                if (file.is_dir) {
-                    fs_delete_dir(state, file.name);
-                } else {
-                    fs_delete_file(state, file.name);
+                if (ui_show_confirm_delete_dialog(state, file.name, file.is_dir)) {
+                    if (file.is_dir) {
+                        fs_delete_dir(state, file.name);
+                    } else {
+                        fs_delete_file(state, file.name);
+                    }
                 }
             }
         }
